@@ -169,22 +169,31 @@ test: test_unit test_e2e
 # Linting #
 ###########
 
-licensecheck: $(GO_FILES)
-	@bad_license_files=$$(for file in $(GO_FILES) ; do \
-               awk 'NR<=5' $$file | grep -Eq "(Copyright|generated|GENERATED)" || echo $$file; \
+.PHONY: lint
+lint: lint_yaml lint_md lint_go
+
+.PHONY: lint_fix
+lint_fix: lint_yaml lint_md_fix lint_go_fix
+
+#################
+# Linting: YAML #
+#################
+
+licensecheck_yaml: $(YAML_FILES)
+	@bad_license_files=$$(for file in $(YAML_FILES) ; do \
+               awk 'NR<=5' $$file | grep -Eq "Copyright" || echo $$file; \
        done); \
        if [ -n "$${bad_license_files}" ]; then \
                echo "license header checking failed:"; echo "$${bad_license_files}"; \
                exit 1; \
        fi
 
-.PHONY: vet
-vet:
-	@$(GO) vet ./...
+.PHONY: lint_yaml
+lint_yaml: licensecheck_yaml
 
-.PHONY: clean
-clean:
-	@git clean -fxd
+#####################
+# Linting: Markdown #
+#####################
 
 vale: .vale.ini $(MD_FILES)
 	@mkdir -p $(VALE_STYLES_DIR) && \
@@ -203,6 +212,19 @@ lint_md: vale markdownfmt
 .PHONY: lint_md_fix
 lint_md_fix: vale markdownfmt_fix
 
+###############
+# Linting: Go #
+###############
+
+licensecheck_go: $(GO_FILES)
+	@bad_license_files=$$(for file in $(GO_FILES) ; do \
+               awk 'NR<=5' $$file | grep -Eq "(Copyright|generated|GENERATED)" || echo $$file; \
+       done); \
+       if [ -n "$${bad_license_files}" ]; then \
+               echo "license header checking failed:"; echo "$${bad_license_files}"; \
+               exit 1; \
+       fi
+
 golangci_lint: $(GO_FILES)
 	@$(GOLANGCI_LINT) run -c $(GOLANGCI_LINT_CONFIG)
 
@@ -210,13 +232,8 @@ golangci_lint_fix: $(GO_FILES)
 	@$(GOLANGCI_LINT) run --fix -c $(GOLANGCI_LINT_CONFIG)
 
 .PHONY: lint_go
-lint_go: licensecheck golangci_lint
+lint_go: licensecheck_go golangci_lint
 
 .PHONY: lint_go_fix
 lint_go_fix: golangci_lint_fix
 
-.PHONY: lint
-lint: lint_md lint_go
-
-.PHONY: lint_fix
-lint_fix: lint_md_fix lint_go_fix
