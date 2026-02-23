@@ -11,7 +11,7 @@ require (
 	github.com/prometheus/common v0.62.0
 	go.uber.org/automaxprocs v1.5.3
 	golang.org/x/text v0.23.0
-	golang.org/x/time v0.7.0
+	golang.org/x/time v0.14.0
 	k8s.io/api v0.32.3
 	k8s.io/apiextensions-apiserver v0.32.3
 	k8s.io/apimachinery v0.32.3
