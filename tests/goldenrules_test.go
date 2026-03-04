@@ -281,21 +281,42 @@ func testGoldenRule(ctx context.Context, t *testing.T, f *framework.Framework, f
 }
 
 // validateStatusOutput validates the RMM status after reconciliation using cmp.Diff.
+// It polls until the expected status matches because the cardinality status is
+// updated asynchronously by a background goroutine after the Processed condition is set.
 func validateStatusOutput(ctx context.Context, t *testing.T, f *framework.Framework, goldenRule *framework.GoldenRule) {
 	t.Helper()
-
-	rmm, err := f.WaitForRMMProcessed(ctx, goldenRule.In.GetNamespace(), goldenRule.In.GetName(), 10*time.Second)
-	if err != nil {
-		t.Fatalf("Failed to wait for RMM to be processed: %v", err)
-	}
 
 	opts := cmp.Options{
 		cmpopts.IgnoreFields(v1alpha1.CardinalityStatus{}, "PerStore", "PerFamily", "CutoffFamilies", "LastUpdated"),
 		cmpopts.IgnoreFields(metav1.Condition{}, "LastTransitionTime", "ObservedGeneration", "Message"),
 	}
 
-	if diff := cmp.Diff(goldenRule.Status, &rmm.Status, opts); diff != "" {
-		t.Errorf("Status mismatch (-expected +actual):\n%s", diff)
+	var lastDiff string
+
+	pollCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	ticker := time.NewTicker(framework.ShortTimeInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-pollCtx.Done():
+			t.Errorf("Status mismatch (-expected +actual):\n%s", lastDiff)
+
+			return
+		case <-ticker.C:
+			rmm, err := f.RSMClient.ResourceStateMetricsV1alpha1().ResourceMetricsMonitors(goldenRule.In.GetNamespace()).
+				Get(ctx, goldenRule.In.GetName(), metav1.GetOptions{})
+			if err != nil {
+				continue
+			}
+
+			lastDiff = cmp.Diff(goldenRule.Status, &rmm.Status, opts)
+			if lastDiff == "" {
+				return
+			}
+		}
 	}
 }
 

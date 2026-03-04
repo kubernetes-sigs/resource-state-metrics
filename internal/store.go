@@ -18,6 +18,7 @@ package internal
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
@@ -39,6 +40,10 @@ type StoreType struct {
 	celTimeout   time.Duration
 
 	cardinalityTracker *CardinalityTracker
+
+	// synced is set to true after the reflector completes its initial list
+	// via Replace, indicating that all pre-existing objects have been added.
+	synced atomic.Bool
 
 	Group    string
 	Version  string
@@ -132,7 +137,14 @@ func (s *StoreType) Replace(items []interface{}, _ string) error {
 		}
 	}
 
+	s.synced.Store(true)
+
 	return nil
+}
+
+// IsSynced returns true after the reflector has completed its initial list.
+func (s *StoreType) IsSynced() bool {
+	return s.synced.Load()
 }
 
 // Stub implementations for interface compatibility.

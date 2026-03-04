@@ -64,7 +64,13 @@ func (c *Controller) handleEvent(ctx context.Context, stores *sync.Map, event st
 		return nil
 	}
 
-	if err := c.processEvent(ctx, stores, event, resource); err != nil {
+	// emitDone is closed after emitSuccess completes so that the cardinality
+	// goroutine (started inside processAddOrUpdate) can safely update the
+	// resource status without racing with emitSuccess.
+	emitDone := make(chan struct{})
+	defer close(emitDone)
+
+	if err := c.processEvent(ctx, stores, event, resource, emitDone); err != nil {
 		logger.Error(err, "event processing failed")
 		c.eventsProcessed.WithLabelValues(resource.GetNamespace(), resource.GetName(), event, "failed").Inc()
 
@@ -109,10 +115,10 @@ func (c *Controller) validateAndPrepareResource(ctx context.Context, o metav1.Ob
 	return updatedResource, nil
 }
 
-func (c *Controller) processEvent(ctx context.Context, stores *sync.Map, event string, resource *v1alpha1.ResourceMetricsMonitor) error {
+func (c *Controller) processEvent(ctx context.Context, stores *sync.Map, event string, resource *v1alpha1.ResourceMetricsMonitor, emitDone <-chan struct{}) error {
 	switch event {
 	case addEvent.String(), updateEvent.String():
-		return c.processAddOrUpdate(ctx, stores, event, resource)
+		return c.processAddOrUpdate(ctx, stores, event, resource, emitDone)
 	case deleteEvent.String():
 		return c.processDelete(stores, resource)
 	default:
@@ -125,7 +131,7 @@ func (c *Controller) processEvent(ctx context.Context, stores *sync.Map, event s
 	}
 }
 
-func (c *Controller) processAddOrUpdate(ctx context.Context, stores *sync.Map, _ string, resource *v1alpha1.ResourceMetricsMonitor) error {
+func (c *Controller) processAddOrUpdate(ctx context.Context, stores *sync.Map, _ string, resource *v1alpha1.ResourceMetricsMonitor, emitDone <-chan struct{}) error {
 	stores.Delete(resource.GetUID())
 
 	configurerInstance := newConfigurer(
@@ -144,6 +150,11 @@ func (c *Controller) processAddOrUpdate(ctx context.Context, stores *sync.Map, _
 	c.resourcesMonitored.WithLabelValues(resource.GetNamespace(), resource.GetName()).Set(1)
 
 	// Non-blocking wait to allow metrics to be generated before calculating cardinality.
+	// The goroutine waits for all store reflectors to complete their initial list (synced)
+	// so that cardinality is calculated with complete data rather than partial results.
+	// It then waits on emitDone to ensure emitSuccess has completed its status update
+	// before persistCardinalityStatus runs, preventing concurrent Get-Modify-Update
+	// cycles from overwriting each other's changes.
 	go func() {
 		_ = wait.PollUntilContextTimeout(ctx, cardinalityPollInterval, cardinalityPollTimeout, true, func(_ context.Context) (bool, error) {
 			storesI, ok := stores.Load(resource.GetUID())
@@ -157,13 +168,15 @@ func (c *Controller) processAddOrUpdate(ctx context.Context, stores *sync.Map, _
 			}
 
 			for _, store := range storesList {
-				if store.cardinalityTracker != nil && store.cardinalityTracker.GetStoreTotal() > 0 {
-					return true, nil
+				if !store.IsSynced() {
+					return false, nil
 				}
 			}
 
-			return false, nil
+			return true, nil
 		})
+
+		<-emitDone
 
 		if err := c.updateCardinalityStatus(ctx, resource); err != nil {
 			klog.FromContext(ctx).Error(err, "failed to update cardinality status")
