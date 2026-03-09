@@ -149,7 +149,6 @@ func (c *Controller) processAddOrUpdate(ctx context.Context, stores *sync.Map, _
 	configurerInstance.build(ctx, stores)
 	c.resourcesMonitored.WithLabelValues(resource.GetNamespace(), resource.GetName()).Set(1)
 
-	// Non-blocking wait to allow metrics to be generated before calculating cardinality.
 	// The goroutine waits for all store reflectors to complete their initial list (synced)
 	// so that cardinality is calculated with complete data rather than partial results.
 	// It then waits on emitDone to ensure emitSuccess has completed its status update
