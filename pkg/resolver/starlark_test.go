@@ -562,6 +562,93 @@ families = [family(name="test", help="test", kind="gauge", samples=[
 	}
 }
 
+func TestStarlarkResolver_Timestamp(t *testing.T) {
+	t.Parallel()
+
+	script := `
+now = timestamp()
+samples = [
+    metric(labels={"type": "current"}, value=now),
+]
+families = [
+    family(name="timestamp_metric", help="Current timestamp", kind="gauge", samples=samples)
+]
+`
+
+	obj := map[string]interface{}{}
+
+	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
+
+	families, err := sg.Resolve(obj)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(families) != 1 || len(families[0].Samples) != 1 {
+		t.Fatalf("expected 1 family with 1 sample")
+	}
+
+	ts := families[0].Samples[0].Value
+	// The timestamp should be a reasonable Unix epoch (after 2024-01-01)
+	if ts < 1704067200 {
+		t.Errorf("timestamp %f is too small (before 2024-01-01)", ts)
+	}
+}
+
+func TestStarlarkResolver_TimestampDuration(t *testing.T) {
+	t.Parallel()
+
+	// Compute duration: timestamp() - a known past time (2024-01-15T10:30:00Z = 1705314600)
+	script := `
+past_unix = 1705314600.0
+duration = timestamp() - past_unix
+samples = [
+    metric(labels={"kind": "test"}, value=duration),
+]
+families = [
+    family(name="duration_metric", help="Duration since event", kind="gauge", samples=samples)
+]
+`
+
+	obj := map[string]interface{}{}
+
+	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
+
+	families, err := sg.Resolve(obj)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(families) != 1 || len(families[0].Samples) != 1 {
+		t.Fatalf("expected 1 family with 1 sample")
+	}
+
+	duration := families[0].Samples[0].Value
+	// Duration since 2024-01-15 should be positive and large
+	if duration < 0 {
+		t.Errorf("expected positive duration, got %f", duration)
+	}
+}
+
+func TestStarlarkResolver_TimestampNoArgs(t *testing.T) {
+	t.Parallel()
+
+	// timestamp() should fail if called with arguments
+	script := `
+ts = timestamp("bad_arg")
+families = []
+`
+
+	obj := map[string]interface{}{}
+
+	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
+
+	_, err := sg.Resolve(obj)
+	if err == nil {
+		t.Fatal("expected error when calling timestamp with arguments, got nil")
+	}
+}
+
 func TestStarlarkResolver_FileOptions_Set(t *testing.T) {
 	t.Parallel()
 

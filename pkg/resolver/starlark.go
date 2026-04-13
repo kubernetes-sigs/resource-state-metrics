@@ -127,6 +127,7 @@ func (sr *StarlarkResolver) resolveWithSteps(thread *starlark.Thread, obj map[st
 		"metric":            starlark.NewBuiltin("metric", metricBuiltin),
 		"family":            starlark.NewBuiltin("family", familyBuiltin),
 		"label_prefix":      starlark.NewBuiltin("label_prefix", labelPrefixBuiltin),
+		"timestamp":         starlark.NewBuiltin("timestamp", timestampBuiltin),
 	}
 
 	objValue, err := goToStarlark(obj)
@@ -253,6 +254,17 @@ func labelPrefixBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.T
 	}
 
 	return result, nil
+}
+
+// timestampBuiltin returns the current time as Unix seconds (a float).
+// This enables computing durations, e.g., `timestamp() - unix_seconds` where
+// unix_seconds was parsed from a resource's lastTransitionTime.
+func timestampBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if err := starlark.UnpackArgs("timestamp", args, kwargs); err != nil {
+		return nil, err
+	}
+
+	return starlark.Float(float64(time.Now().Unix())), nil
 }
 
 // goToStarlark converts a Go value to a Starlark value.
