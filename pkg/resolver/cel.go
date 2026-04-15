@@ -295,7 +295,7 @@ func labelPrefixBinding(lhs, rhs ref.Val) ref.Val {
 // returns the current time as Unix seconds (a double). This enables computing
 // durations by subtracting a resource's lastTransitionTime from the current
 // time, e.g., `timestamp() - unixSeconds(o.status.conditions[0].lastTransitionTime)`.
-func timestampBinding(args ...ref.Val) ref.Val {
+func timestampBinding(_ ...ref.Val) ref.Val {
 	return types.Double(float64(time.Now().Unix()))
 }
 

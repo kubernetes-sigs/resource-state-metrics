@@ -270,12 +270,12 @@ func TestCELResolver_Quantity(t *testing.T) {
 func TestCELResolver_Timestamp(t *testing.T) {
 	t.Parallel()
 
-	cr := NewCELResolver(klog.NewKlogr(), 10e5, 5*time.Second, nil, "test-ns", "test-rmm", "test-family")
+	resolver := NewCELResolver(klog.NewKlogr(), 10e5, 5*time.Second, nil, "test-ns", "test-rmm", "test-family")
 
 	t.Run("returns current unix seconds", func(t *testing.T) {
 		t.Parallel()
 
-		got := cr.Resolve(`timestamp()`, map[string]any{})
+		got := resolver.Resolve(`timestamp()`, map[string]any{})
 		if len(got) != 1 {
 			t.Fatalf("expected 1 result, got %d", len(got))
 		}
@@ -296,7 +296,7 @@ func TestCELResolver_Timestamp(t *testing.T) {
 	t.Run("compute duration since transition", func(t *testing.T) {
 		t.Parallel()
 
-		got := cr.Resolve(`timestamp() - unixSeconds(o.timestamp)`, map[string]any{"timestamp": "2024-01-15T10:30:00Z"})
+		got := resolver.Resolve(`timestamp() - unixSeconds(o.timestamp)`, map[string]any{"timestamp": "2024-01-15T10:30:00Z"})
 		if len(got) != 1 {
 			t.Fatalf("expected 1 result, got %d", len(got))
 		}
