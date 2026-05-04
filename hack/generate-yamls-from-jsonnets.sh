@@ -47,8 +47,8 @@ local rsm = (import \"jsonnet/resource-state-metrics/resource-state-metrics.libs
   image:: \"registry.k8s.io/${PROJECT_NAME}/${PROJECT_NAME}:v${VERSION}\",
 };
 {
-  \"aggregated-cluster-role-binding\": rsm.aggregatedClusterRoleBinding,
-  \"aggregated-cluster-role\": rsm.aggregatedClusterRole,
+  \"cluster-role-binding-aggregated\": rsm.aggregatedClusterRoleBinding,
+  \"cluster-role-aggregated\": rsm.aggregatedClusterRole,
   \"cluster-role-binding\": rsm.clusterRoleBinding,
   \"deployment\": rsm.deployment,
   \"service\": rsm.service,
@@ -84,7 +84,7 @@ $YQ -i ".metadata.labels = {
 
 # Copy jsonnet-generated manifests to manifests/ for a complete deployment set
 echo "Copying jsonnet manifests to manifests/"
-for file in aggregated-cluster-role.yaml aggregated-cluster-role-binding.yaml cluster-role-binding.yaml deployment.yaml service.yaml service-account.yaml; do
+for file in cluster-role-aggregated.yaml cluster-role-binding-aggregated.yaml cluster-role-binding.yaml deployment.yaml service.yaml service-account.yaml; do
     cp "${OUTPUT_DIR}/${file}" "manifests/${file}"
     echo "  ${file}"
 done
