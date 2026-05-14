@@ -10,12 +10,55 @@
 - End-to-end and golden rule tests are in `tests/`.
 
 ## Preferred workflow for cloud agents
-1. Treat command/target/path references in this file as snapshots of current repository state; verify they still match the repo before relying on them.
+1. Treat command/target/path references in this file as snapshots of current repository state; verify they still match the repository before relying on them.
 2. Read `Makefile` and `.github/workflows/validations.yaml` first to align local checks with CI.
 3. Keep changes minimal and scoped. Avoid refactoring unrelated packages.
 4. If API types or generated interfaces change, run `make codegen` and then `make verify_generated`.
 5. Run targeted tests first, then run broader checks before finalizing.
 6. After each PR merge, re-check this file against the current repository state and open a follow-up PR if any instruction here has drifted.
+
+## Pull request descriptions and code review guidance
+
+When creating pull request descriptions or reviewing PRs, use the following repository-adapted structure.
+
+### PR description template
+- **What changed**
+  - Clear summary of modified files/components (`internal/`, `pkg/apis/`, `pkg/resolver/`, `tests/`, manifests, CI files).
+  - Link related issue(s) or ticket(s).
+- **Why**
+  - Problem statement and user/business context.
+  - Technical rationale for the chosen approach and notable alternatives.
+- **Testing**
+  - [ ] Unit tests (`make test_unit`) pass for impacted packages.
+  - [ ] E2E tests (`make test_e2e`) pass for behavior changes.
+  - [ ] Generated/code-style checks relevant to changes pass (`make verify_generated`, `make lint`).
+  - [ ] Security/performance considerations were checked.
+- **Breaking changes**
+  - Note API/behavioral changes for `ResourceMetricsMonitor` or emitted metrics.
+  - Include migration/rollout guidance for CRD, manifest, and alert/dashboard impacts when needed.
+
+### Review focus areas
+- **Security (🔒 / 🚨)**
+  - Validate input handling from CRs/manifests and avoid information leakage in errors/logs.
+  - Check authn/authz-sensitive code paths and ensure no hard-coded secrets.
+- **Performance (⚡)**
+  - Watch for expensive reconciliation loops, high-cardinality metrics, and unnecessary Kubernetes API calls.
+  - Consider informer/cache usage and scalability impacts.
+- **Testing (✅ / 💭)**
+  - Ensure changed behavior is covered in unit or e2e tests and edge cases are exercised.
+- **Documentation (📚)**
+  - Confirm docs/manifests/instructions are updated when behavior, interfaces, or workflow expectations change.
+- **Code quality (🧹)**
+  - Keep functions focused, names clear, and error handling/logging consistent with existing patterns.
+
+### Review style
+- Be specific and constructive.
+- Use this format where useful:
+  - **Issue:** what needs attention
+  - **Suggestion:** concrete change (with snippet if helpful)
+  - **Why:** expected benefit/risk reduction
+- Ask clarifying questions when intent is unclear.
+- Prioritize recommendations that improve security, performance, reliability, and maintainability.
 
 ## Build, lint, and test commands
 
