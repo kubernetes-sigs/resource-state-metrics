@@ -60,6 +60,18 @@ When creating pull request descriptions or reviewing PRs, use the following repo
 - Ask clarifying questions when intent is unclear.
 - Prioritize recommendations that improve security, performance, reliability, and maintainability.
 
+### Initial PR workflow-failure response (run once per PR unless explicitly asked again)
+
+When a new PR is raised and workflows are failing because repository workflow conventions were not followed (for example, editing generated manifests directly or skipping required make targets), provide one actionable, step-by-step remediation comment:
+1. Point to the exact failing workflow/job and error from logs.
+2. Classify the root cause in repository terms (source files vs generated outputs, missing local validation, etc.).
+3. Give concrete fix commands from repository root:
+   - `make jsonnet_manifests && make manifests && make verify_generated` for manifest-generation drift.
+   - `make codegen && make verify_generated` if generated client code is out of date.
+   - `make build && make test_unit && make test_e2e` and `export PATH="$(go env GOPATH)/bin:$PATH" && make CHECKMAKE="$(go env GOPATH)/bin/checkmake" lint` for missed local checks.
+4. Ask the author to commit regenerated artifacts and rerun CI.
+5. Use the **Issue / Suggestion / Why** format, and include any security/performance/testing/doc follow-ups that apply.
+
 ## Build, lint, and test commands
 
 Run from the repository root.
