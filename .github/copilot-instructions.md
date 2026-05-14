@@ -14,6 +14,8 @@
 2. Keep changes minimal and scoped. Avoid refactoring unrelated packages.
 3. If API types or generated interfaces change, run `make codegen` and then `make verify_generated`.
 4. Run targeted tests first, then run broader checks before finalizing.
+5. Treat command/target/path references in this file as snapshots of current repository state; verify they still match the repo before relying on them.
+6. After each PR merge, re-check this file against the current repository state and open a follow-up PR if any instruction here has drifted.
 
 ## Build, lint, and test commands
 
