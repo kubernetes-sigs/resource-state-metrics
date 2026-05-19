@@ -166,6 +166,13 @@ func (s *mainServer) build(ctx context.Context, client kubernetes.Interface, _ p
 
 			// Generate metrics.
 			generator(writer)
+
+			// Write the OpenMetrics EOF trailer if the negotiated content type is OpenMetrics
+			if contentType.FormatType() == expfmt.TypeOpenMetrics {
+				if _, err := expfmt.FinalizeOpenMetrics(writer); err != nil {
+					logger.Error(err, "error writing OpenMetrics EOF trailer", "source", s.source)
+				}
+			}
 		}
 	}
 	mux.Handle("/metrics", promhttp.InstrumentHandlerDuration(s.requestsDurationVec, metricsHandler(func(w http.ResponseWriter) {
