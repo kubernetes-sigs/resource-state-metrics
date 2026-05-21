@@ -16,6 +16,7 @@ limitations under the License.
 package resolver
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -264,6 +265,54 @@ func TestCELResolver_Quantity(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCELResolver_Timestamp(t *testing.T) {
+	t.Parallel()
+
+	resolver := NewCELResolver(klog.NewKlogr(), 10e5, 5*time.Second, nil, "test-ns", "test-rmm", "test-family")
+
+	t.Run("returns current unix seconds", func(t *testing.T) {
+		t.Parallel()
+
+		got := resolver.Resolve(`timestamp()`, map[string]any{})
+		if len(got) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(got))
+		}
+
+		for _, v := range got {
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				t.Fatalf("expected numeric result, got %q: %v", v, err)
+			}
+
+			// Should be a reasonable Unix epoch (after 2024-01-01)
+			if f < 1704067200 {
+				t.Errorf("timestamp %f is too small (before 2024-01-01)", f)
+			}
+		}
+	})
+
+	t.Run("compute duration since transition", func(t *testing.T) {
+		t.Parallel()
+
+		got := resolver.Resolve(`timestamp() - unixSeconds(o.timestamp)`, map[string]any{"timestamp": "2024-01-15T10:30:00Z"})
+		if len(got) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(got))
+		}
+
+		for _, v := range got {
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				t.Fatalf("expected numeric result, got %q: %v", v, err)
+			}
+
+			// Duration since 2024-01-15 should be positive
+			if f <= 0 {
+				t.Errorf("expected positive duration, got %f", f)
+			}
+		}
+	})
 }
 
 func TestCELResolver_LabelPrefix(t *testing.T) {
