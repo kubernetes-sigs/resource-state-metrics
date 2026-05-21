@@ -1,4 +1,7 @@
-FROM golang:1.25 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /
 
@@ -8,7 +11,7 @@ RUN go mod download
 
 COPY . .
 
-RUN make resource-state-metrics
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH make resource-state-metrics
 
 FROM ubuntu:24.04
 
