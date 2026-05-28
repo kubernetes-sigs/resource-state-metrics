@@ -116,12 +116,14 @@ type StarlarkConfig struct {
 	// Script is the inline Starlark script source code.
 	// The script has access to `obj` (the resource as a dict) and built-in functions:
 	// - quantity_to_float(s): Parse Kubernetes Quantity ("100m", "1Gi") to float
-	// - timestamp(): Current time as Unix epoch seconds (float)
-	// - parse_time(s): Parse an RFC-3339 / RFC-3339Nano timestamp string
-	//   (e.g. condition.lastTransitionTime) to Unix epoch seconds. Empty
-	//   input returns 0.0; malformed non-empty input is an error. Combined
-	//   with timestamp(), this enables duration-based metrics like "how
-	//   long has this resource held its current condition status".
+	// - time: starlark-go's time module (https://pkg.go.dev/go.starlark.net/lib/time).
+	//   Notable entries: time.now() returns the current time.time; time.parse_time(s)
+	//   parses an RFC-3339 string (e.g. condition.lastTransitionTime) into a time.time;
+	//   subtracting two time.time values yields a time.duration whose .seconds
+	//   attribute is a float. Example duration-since-transition pattern:
+	//   `(time.now() - time.parse_time(c["lastTransitionTime"])).seconds`.
+	//   Note: time.parse_time errors on empty input, so guard with
+	//   `if not ts: continue` before calling it.
 	// - label_prefix(prefix, labels): Prefix and sanitize a label dict's keys
 	// - metric(labels, value): Create a sample with labels dict and float value
 	// - family(name, help, kind, samples): Create a family with list of samples

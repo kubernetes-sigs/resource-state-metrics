@@ -1,7 +1,9 @@
 FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
 
-ARG TARGETOS
-ARG TARGETARCH
+# Default TARGETOS/TARGETARCH so plain `docker build` (BuildKit disabled, no
+# buildx) does not expand them empty and feed `GOOS= GOARCH=` to the toolchain.
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 
 WORKDIR /
 

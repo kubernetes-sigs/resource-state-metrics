@@ -562,16 +562,16 @@ families = [family(name="test", help="test", kind="gauge", samples=[
 	}
 }
 
-func TestStarlarkResolver_Timestamp(t *testing.T) {
+func TestStarlarkResolver_TimeNow(t *testing.T) {
 	t.Parallel()
 
+	// time.now() returns a time.time; .unix gives Unix seconds as an int.
 	script := `
-now = timestamp()
 samples = [
-    metric(labels={"type": "current"}, value=now),
+    metric(labels={"type": "current"}, value=float(time.now().unix)),
 ]
 families = [
-    family(name="timestamp_metric", help="Current timestamp", kind="gauge", samples=samples)
+    family(name="now_metric", help="Current time", kind="gauge", samples=samples)
 ]
 `
 
@@ -579,29 +579,37 @@ families = [
 
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
+	// Capture a wall-clock window around Resolve() to assert closely.
+	before := time.Now().Unix()
+
 	families, err := sg.Resolve(obj)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
+	after := time.Now().Unix()
 
 	if len(families) != 1 || len(families[0].Samples) != 1 {
 		t.Fatalf("expected 1 family with 1 sample")
 	}
 
 	ts := families[0].Samples[0].Value
-	// The timestamp should be a reasonable Unix epoch (after 2024-01-01)
-	if ts < 1704067200 {
-		t.Errorf("timestamp %f is too small (before 2024-01-01)", ts)
+	// Allow a 5-second slop on either side to absorb scheduling jitter without
+	// pinning to an arbitrary calendar date that ages badly.
+	const delta = 5.0
+	if ts < float64(before)-delta || ts > float64(after)+delta {
+		t.Errorf("time.now().unix = %f, expected within [%d-%g, %d+%g]", ts, before, delta, after, delta)
 	}
 }
 
-func TestStarlarkResolver_TimestampDuration(t *testing.T) {
+func TestStarlarkResolver_TimeDuration(t *testing.T) {
 	t.Parallel()
 
-	// Compute duration: timestamp() - a known past time (2024-01-15T10:30:00Z = 1705314600)
+	// Compute duration in seconds: time.now() - parse_time("2024-01-15T10:30:00Z")
+	// yields a time.duration, whose .seconds attribute is a float.
 	script := `
-past_unix = 1705314600.0
-duration = timestamp() - past_unix
+past = time.parse_time("2024-01-15T10:30:00Z")
+duration = (time.now() - past).seconds
 samples = [
     metric(labels={"kind": "test"}, value=duration),
 ]
@@ -624,38 +632,20 @@ families = [
 	}
 
 	duration := families[0].Samples[0].Value
-	// Duration since 2024-01-15 should be positive and large
-	if duration < 0 {
+	// Duration since 2024-01-15 should be positive.
+	if duration <= 0 {
 		t.Errorf("expected positive duration, got %f", duration)
-	}
-}
-
-func TestStarlarkResolver_TimestampNoArgs(t *testing.T) {
-	t.Parallel()
-
-	// timestamp() should fail if called with arguments
-	script := `
-ts = timestamp("bad_arg")
-families = []
-`
-
-	obj := map[string]interface{}{}
-
-	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
-
-	_, err := sg.Resolve(obj)
-	if err == nil {
-		t.Fatal("expected error when calling timestamp with arguments, got nil")
 	}
 }
 
 func TestStarlarkResolver_ParseTime(t *testing.T) {
 	t.Parallel()
 
-	// 2024-01-15T10:30:00Z = 1705314600 Unix seconds
+	// 2024-01-15T10:30:00Z = 1705314600 Unix seconds. .unix returns an int;
+	// the test sample is a float so we cast at the script boundary.
 	script := `
-parsed = parse_time("2024-01-15T10:30:00Z")
-samples = [metric(labels={"kind": "test"}, value=parsed)]
+parsed = time.parse_time("2024-01-15T10:30:00Z")
+samples = [metric(labels={"kind": "test"}, value=float(parsed.unix))]
 families = [family(name="parsed_metric", help="Parsed timestamp", kind="gauge", samples=samples)]
 `
 
@@ -669,7 +659,7 @@ families = [family(name="parsed_metric", help="Parsed timestamp", kind="gauge", 
 	}
 
 	if got, want := families[0].Samples[0].Value, 1705314600.0; got != want {
-		t.Errorf("parse_time returned %f, expected %f", got, want)
+		t.Errorf("time.parse_time(...).unix returned %f, expected %f", got, want)
 	}
 }
 
@@ -677,10 +667,10 @@ func TestStarlarkResolver_ParseTimeRFC3339Nano(t *testing.T) {
 	t.Parallel()
 
 	// Kubernetes lastTransitionTime is often RFC-3339 with sub-second precision.
-	// Sub-seconds are truncated when returning Unix seconds (1705314600).
+	// Sub-seconds are truncated when reading .unix (1705314600).
 	script := `
-parsed = parse_time("2024-01-15T10:30:00.123456789Z")
-samples = [metric(labels={"kind": "test"}, value=parsed)]
+parsed = time.parse_time("2024-01-15T10:30:00.123456789Z")
+samples = [metric(labels={"kind": "test"}, value=float(parsed.unix))]
 families = [family(name="parsed_metric", help="Parsed timestamp", kind="gauge", samples=samples)]
 `
 
@@ -694,31 +684,7 @@ families = [family(name="parsed_metric", help="Parsed timestamp", kind="gauge", 
 	}
 
 	if got, want := families[0].Samples[0].Value, 1705314600.0; got != want {
-		t.Errorf("parse_time returned %f, expected %f", got, want)
-	}
-}
-
-func TestStarlarkResolver_ParseTimeEmpty(t *testing.T) {
-	t.Parallel()
-
-	// Empty string is a legitimate "not set" signal, returns 0.0 (no error).
-	script := `
-parsed = parse_time("")
-samples = [metric(labels={"kind": "test"}, value=parsed)]
-families = [family(name="parsed_metric", help="Parsed timestamp", kind="gauge", samples=samples)]
-`
-
-	obj := map[string]interface{}{}
-
-	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
-
-	families, err := sg.Resolve(obj)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if got, want := families[0].Samples[0].Value, 0.0; got != want {
-		t.Errorf("parse_time(\"\") returned %f, expected %f", got, want)
+		t.Errorf("time.parse_time(...).unix returned %f, expected %f", got, want)
 	}
 }
 
@@ -727,7 +693,7 @@ func TestStarlarkResolver_ParseTimeInvalid(t *testing.T) {
 
 	// Malformed non-empty input is a real error — fail loudly so script bugs surface.
 	script := `
-parsed = parse_time("not-a-timestamp")
+parsed = time.parse_time("not-a-timestamp")
 families = []
 `
 
@@ -741,24 +707,6 @@ families = []
 	}
 }
 
-func TestStarlarkResolver_ParseTimeNoArgs(t *testing.T) {
-	t.Parallel()
-
-	script := `
-parsed = parse_time()
-families = []
-`
-
-	obj := map[string]interface{}{}
-
-	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
-
-	_, err := sg.Resolve(obj)
-	if err == nil {
-		t.Fatal("expected error when calling parse_time without args, got nil")
-	}
-}
-
 // TestStarlarkResolver_ConditionAgeFilter exercises the production use case:
 // suppress a condition-derived metric until the condition has held its current
 // status for at least `grace` seconds.
@@ -766,12 +714,17 @@ func TestStarlarkResolver_ConditionAgeFilter(t *testing.T) {
 	t.Parallel()
 
 	// past condition (well outside grace) -> emit; recent condition -> suppress.
+	// time.parse_time errors on empty input, so guard before calling it — the
+	// "no lastTransitionTime" case is "we don't know the age, skip the gate".
 	script := `
 grace = 90.0
 samples = []
 for c in obj["status"]["conditions"]:
     if c["type"] == "Synced" and c["status"] != "True":
-        age = timestamp() - parse_time(c.get("lastTransitionTime", ""))
+        ts = c.get("lastTransitionTime", "")
+        if not ts:
+            continue
+        age = (time.now() - time.parse_time(ts)).seconds
         if age < grace:
             continue
         samples.append(metric(labels={"reason": c["reason"]}, value=1.0))

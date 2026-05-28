@@ -76,7 +76,7 @@ const (
 	celCostUnixSeconds uint64 = 10
 	celCostQuantity    uint64 = 10
 	celCostLabelPrefix uint64 = 20
-	celCostTimestamp   uint64 = 1
+	celCostNow         uint64 = 1
 )
 
 // CallCost sets the runtime cost for CEL queries on a per-function basis.
@@ -85,7 +85,7 @@ func (ce costEstimator) CallCost(function string, _ string, _ []ref.Val, _ ref.V
 		"unixSeconds": celCostUnixSeconds,
 		"quantity":    celCostQuantity,
 		"labelPrefix": celCostLabelPrefix,
-		"timestamp":   celCostTimestamp,
+		"now":         celCostNow,
 	}
 	estimatedCost := 1 + customFunctionsCosts[function]
 
@@ -197,11 +197,11 @@ func (cr *CELResolver) createEnvironment() (*cel.Env, error) {
 				cel.BinaryBinding(labelPrefixBinding),
 			),
 		),
-		cel.Function("timestamp",
-			cel.Overload("timestamp_void",
+		cel.Function("now",
+			cel.Overload("now_void",
 				[]*cel.Type{},
 				cel.DoubleType,
-				cel.FunctionBinding(timestampBinding),
+				cel.FunctionBinding(nowBinding),
 			),
 		),
 	)
@@ -291,11 +291,13 @@ func labelPrefixBinding(lhs, rhs ref.Val) ref.Val {
 	return types.NewStringStringMap(types.DefaultTypeAdapter, result)
 }
 
-// timestampBinding implements the logic for the timestamp function, which
-// returns the current time as Unix seconds (a double). This enables computing
-// durations by subtracting a resource's lastTransitionTime from the current
-// time, e.g., `timestamp() - unixSeconds(o.status.conditions[0].lastTransitionTime)`.
-func timestampBinding(_ ...ref.Val) ref.Val {
+// nowBinding implements the logic for the now function, which returns the
+// current time as Unix seconds (a double). This enables computing durations
+// by subtracting a resource's lastTransitionTime from the current time,
+// e.g., `now() - unixSeconds(o.status.conditions[0].lastTransitionTime)`.
+// Named `now` rather than `timestamp` so we do not shadow CEL's built-in
+// `timestamp(string)` cast.
+func nowBinding(_ ...ref.Val) ref.Val {
 	return types.Double(float64(time.Now().Unix()))
 }
 

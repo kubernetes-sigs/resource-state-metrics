@@ -267,7 +267,7 @@ func TestCELResolver_Quantity(t *testing.T) {
 	}
 }
 
-func TestCELResolver_Timestamp(t *testing.T) {
+func TestCELResolver_Now(t *testing.T) {
 	t.Parallel()
 
 	resolver := NewCELResolver(klog.NewKlogr(), 10e5, 5*time.Second, nil, "test-ns", "test-rmm", "test-family")
@@ -275,7 +275,10 @@ func TestCELResolver_Timestamp(t *testing.T) {
 	t.Run("returns current unix seconds", func(t *testing.T) {
 		t.Parallel()
 
-		got := resolver.Resolve(`timestamp()`, map[string]any{})
+		before := time.Now().Unix()
+		got := resolver.Resolve(`now()`, map[string]any{})
+		after := time.Now().Unix()
+
 		if len(got) != 1 {
 			t.Fatalf("expected 1 result, got %d", len(got))
 		}
@@ -286,9 +289,11 @@ func TestCELResolver_Timestamp(t *testing.T) {
 				t.Fatalf("expected numeric result, got %q: %v", v, err)
 			}
 
-			// Should be a reasonable Unix epoch (after 2024-01-01)
-			if f < 1704067200 {
-				t.Errorf("timestamp %f is too small (before 2024-01-01)", f)
+			// Allow a 5-second slop around the call window — pinning to a
+			// calendar date ages badly under clock skew or backdated runners.
+			const delta = 5.0
+			if f < float64(before)-delta || f > float64(after)+delta {
+				t.Errorf("now() = %f, expected within [%d-%g, %d+%g]", f, before, delta, after, delta)
 			}
 		}
 	})
@@ -296,7 +301,7 @@ func TestCELResolver_Timestamp(t *testing.T) {
 	t.Run("compute duration since transition", func(t *testing.T) {
 		t.Parallel()
 
-		got := resolver.Resolve(`timestamp() - unixSeconds(o.timestamp)`, map[string]any{"timestamp": "2024-01-15T10:30:00Z"})
+		got := resolver.Resolve(`now() - unixSeconds(o.timestamp)`, map[string]any{"timestamp": "2024-01-15T10:30:00Z"})
 		if len(got) != 1 {
 			t.Fatalf("expected 1 result, got %d", len(got))
 		}

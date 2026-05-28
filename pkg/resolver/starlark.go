@@ -24,6 +24,7 @@ import (
 
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/metricutil"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/options"
+	startime "go.starlark.net/lib/time"
 	"go.starlark.net/starlark"
 	"go.starlark.net/syntax"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -127,8 +128,9 @@ func (sr *StarlarkResolver) resolveWithSteps(thread *starlark.Thread, obj map[st
 		"metric":            starlark.NewBuiltin("metric", metricBuiltin),
 		"family":            starlark.NewBuiltin("family", familyBuiltin),
 		"label_prefix":      starlark.NewBuiltin("label_prefix", labelPrefixBuiltin),
-		"timestamp":         starlark.NewBuiltin("timestamp", timestampBuiltin),
-		"parse_time":        starlark.NewBuiltin("parse_time", parseTimeBuiltin),
+		// time module provides time.now(), time.parse_time(s), durations, etc.
+		// See https://github.com/google/starlark-go/blob/master/lib/time/time.go.
+		"time": startime.Module,
 	}
 
 	objValue, err := goToStarlark(obj)
@@ -255,38 +257,6 @@ func labelPrefixBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.T
 	}
 
 	return result, nil
-}
-
-// timestampBuiltin returns the current time as Unix seconds (a float).
-// This enables computing durations, e.g., `timestamp() - parse_time(o.status.conditions[0].lastTransitionTime)`.
-func timestampBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	if err := starlark.UnpackArgs("timestamp", args, kwargs); err != nil {
-		return nil, err
-	}
-
-	return starlark.Float(float64(time.Now().Unix())), nil
-}
-
-// parseTimeBuiltin parses an RFC-3339 timestamp string and returns Unix seconds (a float).
-// Kubernetes condition `lastTransitionTime` fields are RFC-3339 strings.
-// An empty input returns 0.0 so callers can guard with `if ts_str:` without an error.
-// A malformed non-empty input returns a parse error.
-func parseTimeBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	var s string
-	if err := starlark.UnpackArgs("parse_time", args, kwargs, "s", &s); err != nil {
-		return nil, err
-	}
-
-	if s == "" {
-		return starlark.Float(0.0), nil
-	}
-
-	t, err := time.Parse(time.RFC3339Nano, s)
-	if err != nil {
-		return nil, fmt.Errorf("invalid RFC-3339 timestamp %q: %w", s, err)
-	}
-
-	return starlark.Float(float64(t.Unix())), nil
 }
 
 // goToStarlark converts a Go value to a Starlark value.
