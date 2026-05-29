@@ -1,7 +1,6 @@
 # Module paraphernalia
 assets/
 /resource-state-metrics
-vendor/
 
 # Generated intermediaries
 tests/golden/metrics.txt
