@@ -29,7 +29,7 @@
   },
 
   rbacAggregationLabel:: {
-    'resource-state-metrics.instrumentation.k8s-sigs.io/aggregate-to-exporter': 'true'
+    'resource-state-metrics.instrumentation.k8s-sigs.io/aggregate-to-exporter': 'true',
   },
 
   podLabels:: {
