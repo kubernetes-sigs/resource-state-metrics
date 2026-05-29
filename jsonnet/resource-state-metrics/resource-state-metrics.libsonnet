@@ -28,12 +28,35 @@
     'app.kubernetes.io/component': 'exporter',
   },
 
+  rbacAggregationLabel:: {
+    'resource-state-metrics.instrumentation.k8s-sigs.io/aggregate-to-exporter': 'true'
+  },
+
   podLabels:: {
     [labelName]: rsm.commonLabels[labelName]
     for labelName in std.objectFields(rsm.commonLabels)
     if !std.setMember(labelName, ['app.kubernetes.io/version'])
   },
 
+  aggregatedClusterRoleBinding:
+    {
+      apiVersion: 'rbac.authorization.k8s.io/v1',
+      kind: 'ClusterRoleBinding',
+      metadata: {
+        name: 'resource-state-metrics-aggregated',
+        labels: rsm.commonLabels + rsm.extraRecommendedLabels,
+      },
+      roleRef: {
+        apiGroup: 'rbac.authorization.k8s.io',
+        kind: 'ClusterRole',
+        name: 'resource-state-metrics-aggregated',
+      },
+      subjects: [{
+        kind: 'ServiceAccount',
+        name: rsm.name,
+        namespace: rsm.namespace,
+      }],
+    },
   clusterRoleBinding:
     {
       apiVersion: 'rbac.authorization.k8s.io/v1',
@@ -96,6 +119,26 @@
         labels: rsm.commonLabels + rsm.extraRecommendedLabels,
       },
       rules: rules,
+    },
+
+  // Aggregated ClusterRole enables simple aggregation of permissions to the exporter
+  aggregatedClusterRole:
+    local aggregationRule = {
+      clusterRoleSelectors: [
+        {
+          matchLabels: rsm.rbacAggregationLabel,
+        },
+      ],
+    };
+
+    {
+      apiVersion: 'rbac.authorization.k8s.io/v1',
+      kind: 'ClusterRole',
+      metadata: {
+        name: 'resource-state-metrics-aggregated',
+        labels: rsm.commonLabels + rsm.extraRecommendedLabels,
+      },
+      aggregationRule: aggregationRule,
     },
 
   deployment:
