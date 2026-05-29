@@ -18,7 +18,7 @@ metadata:
   labels:
     app.kubernetes.io/component: exporter
     app.kubernetes.io/name: resource-state-metrics
-    app.kubernetes.io/version: 0.0.1
+    app.kubernetes.io/version: 0.1.0
   name: resource-state-metrics
   namespace: default
 spec:
@@ -31,7 +31,7 @@ spec:
       labels:
         app.kubernetes.io/component: exporter
         app.kubernetes.io/name: resource-state-metrics
-        app.kubernetes.io/version: 0.0.1
+        app.kubernetes.io/version: 0.1.0
     spec:
       automountServiceAccountToken: true
       containers:
@@ -40,7 +40,7 @@ spec:
         - --main-port=9999
         - --self-host=0.0.0.0
         - --self-port=9998
-        image: registry.k8s.io/resource-state-metrics/resource-state-metrics:v0.0.1
+        image: registry.k8s.io/resource-state-metrics/resource-state-metrics:v0.1.0
         livenessProbe:
           httpGet:
             path: /livez

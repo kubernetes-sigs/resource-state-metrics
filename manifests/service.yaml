@@ -18,7 +18,7 @@ metadata:
   labels:
     app.kubernetes.io/component: exporter
     app.kubernetes.io/name: resource-state-metrics
-    app.kubernetes.io/version: 0.0.1
+    app.kubernetes.io/version: 0.1.0
   name: resource-state-metrics
   namespace: default
 spec:
