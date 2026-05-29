@@ -15,108 +15,178 @@
 version: "2"
 linters:
   enable:
+    # Detects passing []any to variadic ...any parameters instead of individual args
     - asasalint
+    # Checks that all code identifiers use only ASCII characters
     - asciicheck
+    # Detects dangerous Unicode bidirectional control characters in source code
     - bidichk
+    # Checks that HTTP response bodies are closed properly
     - bodyclose
+    # Checks for canonical HTTP header key formatting
     - canonicalheader
+    # Detects contexts stored in struct fields, which can cause lifecycle issues
     - containedctx
+    # Checks for functions that should accept a context but don't
     - contextcheck
+    # Detects places where loop variables are copied unnecessarily (Go 1.22+)
     - copyloopvar
+    # Checks function and package cyclomatic complexity
     - cyclop
+    # Checks declaration order and count of types, consts, vars, and funcs
     - decorder
+    # Controls which Go packages are allowed or denied as dependencies
     - depguard
+    # Detects assignments with too many blank identifiers (e.g., x, _, _, _ = f())
     - dogsled
+    # Detects duplicate code blocks across the codebase
     - dupl
+    # Detects duplicated words in comments and strings
     - dupword
+    # Detects incorrect usage of time.Duration (e.g., two durations multiplied)
     - durationcheck
+    # Checks types passed to json encoding functions for potential issues
     - errchkjson
+    # Checks that sentinel error variables follow the ErrXxx naming convention
     - errname
+    # Finds issues with error wrapping, type assertions, and comparisons
     - errorlint
+    # Checks exhaustiveness of enum switch statements
     - exhaustive
+    # Detects uses of golang.org/x/exp functions available in the standard library
     - exptostd
+    # Detects nested contexts in loops which can lead to memory leaks
     - fatcontext
+    # Forbids usage of specific identifiers (functions, methods) via patterns
     - forbidigo
+    # Detects missing type assertion safety checks (missing the ok value)
     - forcetypeassert
+    # Checks the order of functions in a file (e.g., exported before unexported)
     - funcorder
+    # Detects long functions by line count and statement count
     - funlen
-    - ginkgolinter
+    # Checks that go:generate and other compiler directives are valid
     - gocheckcompilerdirectives
+    # Checks that init functions are not used in Go packages
     - gochecknoinits
+    # Checks that sum type (interface) switches are exhaustive
     - gochecksumtype
+    # Computes and checks the cognitive complexity of functions
     - gocognit
-    - goconst
+    # Provides many diagnostics covering bugs, performance, and style issues
     - gocritic
+    # Computes and checks the cyclomatic complexity of functions
     - gocyclo
+    # Checks that comments end with a period
     - godot
+    # Detects TODO/BUG/FIXME comments that should be tracked as issues
     - godox
+    # Checks that source files have a required header (e.g., license)
     - goheader
+    # Manages the use of replace/retract/exclude directives in go.mod
     - gomoddirectives
-    - gomodguard
+    # Checks that printf-like functions are named with f suffix
     - goprintffuncname
+    # Inspects source code for security problems
     - gosec
+    # Reports i18n/l10n anti-patterns like string literals in user-facing code
     - gosmopolitan
+    # Analyzes expression groups (imports, consts, vars, types) for consistency
     - grouper
+    # Detects interface issues like unused interfaces or wrong interface usage
     - iface
+    # Enforces consistent import aliases across files
     - importas
+    # Reports interfaces with unnamed method parameters
     - inamedparam
+    # Checks the number of methods in an interface (detects bloated interfaces)
     - interfacebloat
+    # Suggests using integer range loops (for i := range n) available in Go 1.22+
     - intrange
+    # Reports long lines exceeding a configured maximum length
     - lll
+    # Checks key-value pairs for common logger libraries (logr, klog, zap, slog)
     - loggercheck
+    # Measures maintainability index of each function
     - maintidx
+    # Finds slice declarations that are not initialized with zero length and later appended
     - makezero
+    # Reports wrong mirror patterns of bytes/strings usage
     - mirror
+    # Finds commonly misspelled English words in comments and strings
     - misspell
+    # Detects magic numbers (unnamed numeric constants) in code
     - mnd
+    # Enforces field tags in marshaled structs (e.g., json, yaml)
     - musttag
+    # Detects naked returns in functions greater than a specified length
     - nakedret
+    # Reports deeply nested if statements
     - nestif
+    # Finds code that returns nil even if it checks that the error is not nil
     - nilerr
+    # Reports returning both a non-nil error and a nil value for errors from errors.As
     - nilnesserr
+    # Checks that functions don't return both a nil value and a nil error
     - nilnil
+    # Checks for a new line before return and branch statements
     - nlreturn
+    # Detects sending HTTP requests without context.Context
     - noctx
+    # Reports ill-formed or missing nolint directives
     - nolintlint
+    # Reports named returns when they are not needed
     - nonamedreturns
+    # Checks for misuse of Sprintf to construct host:port in a net address
     - nosprintfhostport
+    # Detects missing t.Parallel() in test functions
     - paralleltest
+    # Suggests using faster fmt alternatives (e.g., strconv instead of fmt.Sprintf)
     - perfsprint
+    # Finds slice declarations that could be preallocated for performance
     - prealloc
+    # Finds code that shadows one of Go's predeclared identifiers (e.g., len, cap)
     - predeclared
+    # Checks Prometheus metrics naming via promlint conventions
     - promlinter
-    - protogetter
+    # Checks that package variables are not reassigned
     - reassign
+    # Checks for conditions on receiver type for methods with pointer or value receivers
     - recvcheck
+    # Drop-in replacement for golint with additional rules and configurability
     - revive
-    - rowserrcheck
+    # Ensures consistent usage of structured logging with log/slog
     - sloglint
-    - spancheck
-    - sqlclosecheck
+    # Advanced Go analysis tool with many checks for bugs and performance
     - staticcheck
+    # Checks that struct tags are well aligned
     - tagalign
+    # Checks struct tag naming conventions (e.g., camelCase for json)
     - tagliatelle
+    # Checks that examples in tests are testable (have expected output comments)
     - testableexamples
-    - testifylint
+    # Detects test helper functions that don't call t.Helper()
     - thelper
+    # Detects inappropriate usage of t.Parallel() in tests
     - tparallel
+    # Detects unnecessary type conversions
     - unconvert
+    # Reports unused function parameters and results
     - unparam
+    # Checks for unused constants, variables, functions, and types
     - unused
+    # Detects the possibility to use variables/constants from the standard library
     - usestdlibvars
+    # Reports uses of os.Setenv and similar in tests instead of t.Setenv
     - usetesting
+    # Checks that variable and parameter names are long enough for their scope
     - varnamelen
+    # Finds wasted assignment statements (values assigned but never read)
     - wastedassign
+    # Detects unnecessary leading and trailing whitespace in code blocks
     - whitespace
+    # Enforces empty line placement to improve code readability
     - wsl_v5
-    - zerologlint
-  disable:
-    - err113
-    - exhaustruct
-    - gochecknoglobals
-    - ireturn
-    - testpackage
-    - wrapcheck
   settings:
     cyclop:
       max-complexity: 18
@@ -172,18 +242,12 @@ linters:
       - linters:
           - dupl
           - funlen
-          - ireturn
           - lll
           - mnd
-          - wrapcheck
         path: _test\.go
       - linters:
           - mnd
-          - wrapcheck
         path: ^tests/framework/
-      - linters:
-          - wrapcheck
-        path: ^pkg/resolver/
       - linters:
           - varnamelen
         path: ^tests/.*
