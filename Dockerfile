@@ -15,23 +15,14 @@ RUN go mod download
 
 COPY . .
 
-# -B forces a rebuild: the `resource-state-metrics` target is file-based, not
-# phony, so a binary copied in from the build context (no .dockerignore) would
-# otherwise satisfy the timestamp check and ignore GOOS/GOARCH.
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH make -B resource-state-metrics
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH make resource-state-metrics
 
-FROM ubuntu:24.04
+FROM gcr.io/distroless/static-debian12:latest@sha256:932f28cabd51c9f9e1e25d3b9d1f09119036722ce86f5c5bd723c4f51cc2d6dc
 
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-
-RUN useradd -u 65534 -o -r nonroot
-
-WORKDIR /
-
-COPY --from=builder /resource-state-metrics .
-
-EXPOSE 9998 9999
+COPY --from=builder /resource-state-metrics /
 
 USER nonroot
 
-ENTRYPOINT ["./resource-state-metrics"]
+ENTRYPOINT ["/resource-state-metrics"]
+
+EXPOSE 9998 9999
