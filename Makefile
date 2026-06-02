@@ -1,5 +1,10 @@
 SHELL := /bin/bash
 
+ALL_ARCH ?= amd64 arm64
+# A literal comma cannot appear in a $(subst) call because Make parses it as
+# an argument separator before the function ever sees it.
+comma := ,
+DOCKER_BUILDX_CMD ?= docker buildx
 GOBIN ?= $(shell go env GOBIN)
 ifeq ($(GOBIN),)
 GOBIN = $(shell go env GOPATH)/bin
@@ -41,6 +46,8 @@ PIPX ?= pipx
 PPROF_OPTIONS ?=
 PPROF_PORT ?= 9998
 PROJECT_NAME = resource-state-metrics
+REGISTRY ?= us-central1-docker.pkg.dev/k8s-staging-images/resource-state-metrics
+TAG ?= $(BUILD_TAG)
 V ?= 4
 VALE ?= vale
 VALE_ARCH ?= $(if $(filter $(shell uname -m),arm64),macOS_arm64,Linux_64-bit)
@@ -166,6 +173,12 @@ $(PROJECT_NAME): $(GO_FILES)
 
 .PHONY: build
 build: $(PROJECT_NAME)
+
+.PHONY: image-push
+image-push:
+	$(DOCKER_BUILDX_CMD) build --pull --push \
+		--platform $(subst $(eval ) ,$(comma),$(addprefix linux/,$(ALL_ARCH))) \
+		-t $(REGISTRY)/$(PROJECT_NAME):$(TAG) .
 
 ###########
 # Running #
