@@ -18,6 +18,7 @@ package internal
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -556,7 +557,9 @@ func writeSingleSample(writeFunc func([]string, []string) error, keys, values []
 func writeExpandedSamples(writeFunc func([]string, []string) error, labelKeys, labelValues []string, expanded map[string][]string, logger klog.Logger) error {
 	var seriesToGenerate int
 
-	for k := range expanded {
+	// Sort expanded keys to ensure deterministic label ordering.
+	// Map iteration order is non-deterministic, so we must sort explicitly.
+	for _, k := range slices.Sorted(maps.Keys(expanded)) {
 		labelKeys = append(labelKeys, k)
 
 		if len(expanded[k]) > seriesToGenerate {
