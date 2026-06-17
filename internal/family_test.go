@@ -171,7 +171,7 @@ func TestFamilyType_rawFrom(t *testing.T) {
 	}
 }
 
-func Test_extractAndSortExpandedValues(t *testing.T) {
+func Test_extractAndSortExpandedMetricValues(t *testing.T) {
 	t.Parallel()
 
 	logger := klog.Background()
@@ -203,7 +203,7 @@ func Test_extractAndSortExpandedValues(t *testing.T) {
 			},
 			wantValues: nil,
 			wantExpandedAfter: map[string][]string{
-				"type": {"Initialized", "Ready"},
+				"type": {"Ready", "Initialized"},
 			},
 		},
 		{
@@ -254,11 +254,10 @@ func Test_extractAndSortExpandedValues(t *testing.T) {
 				expandedValueSentinel: {"1", "2"},
 				"type":                {"Ready", "Initialized", "PodScheduled"},
 			},
-			// Values are NOT appended to parallel slices due to length mismatch,
-			// but labels are still sorted.
+			// Values are NOT appended to parallel slices due to length mismatch
 			wantValues: []string{"1", "2"},
 			wantExpandedAfter: map[string][]string{
-				"type": {"Initialized", "PodScheduled", "Ready"},
+				"type": {"Ready", "Initialized", "PodScheduled"},
 			},
 		},
 	}
@@ -267,7 +266,7 @@ func Test_extractAndSortExpandedValues(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := extractAndSortExpandedValues(tt.expanded, logger)
+			got := extractAndSortExpandedMetricValues(tt.expanded, logger)
 
 			if diff := cmp.Diff(tt.wantValues, got); diff != "" {
 				t.Errorf("returned values mismatch (-want +got):\n%s", diff)

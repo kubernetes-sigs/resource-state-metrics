@@ -387,7 +387,13 @@ func resolveLabels(labels []v1alpha1.Label, resolverInstance resolver.Resolver, 
 	return resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet
 }
 
-// sortLabels sorts keys and applies the same permutation to all parallel slices.
+// sortLabels sorts keys alphabetically and applies the same permutation to all
+// parallel slices, so that positionally-correlated data stays aligned with its
+// corresponding key after sorting. For example, given label keys
+// ["Ready", "Degraded", "Progressing"] with label values
+// ["True", "False", "Unknown"], sorting produces keys
+// ["Degraded", "Progressing", "Ready"] and values ["False", "Unknown", "True"],
+// preserving the pairing Degraded→"False", Progressing→"Unknown", Ready→"True".
 func sortLabels(keys []string, parallel ...[]string) {
 	indices := make([]int, len(keys))
 	for i := range indices {
@@ -421,11 +427,11 @@ func sanitizeKey(s string) string {
 	return strcase.ToSnake(nonWordRegex.ReplaceAllString(s, "_"))
 }
 
-// extractAndSortExpandedValues extracts expanded values from the sentinel key and co-sorts them with labels to maintain index correspondence.
+// extractAndSortExpandedMetricValues extracts expanded values from the sentinel key and co-sorts them with labels to maintain index correspondence.
 // The sentinel key is removed from the expanded map after extraction.
 // If there is a length mismatch between the expanded values and labels, a warning is logged and values are not co-sorted to avoid misalignment.
 // If multiple label keys are present, they are co-sorted together based on the anchor key (the lexicographically smallest label key) to maintain their relative order.
-func extractAndSortExpandedValues(expanded map[string][]string, logger klog.Logger) []string {
+func extractAndSortExpandedMetricValues(expanded map[string][]string, logger klog.Logger) []string {
 	// Extract per-sample values stored under the sentinel when the value
 	// expression resolved to a list. The sentinel is not a real label.
 	// NOTE that we do not want resolver-specific logic making its way into
@@ -450,6 +456,12 @@ func extractAndSortExpandedValues(expanded map[string][]string, logger klog.Logg
 	}
 
 	anchor := expanded[sortKey]
+	if len(expandedValues) != len(anchor) {
+		logger.V(1).Info("Mismatch in expanded label and value counts, skipping expanded label sorting", "labelCount", len(anchor), "valueCount", len(expandedValues))
+
+		return expandedValues
+	}
+
 	parallel := make([][]string, 0, len(expanded)+1)
 
 	for k := range expanded {
@@ -458,12 +470,7 @@ func extractAndSortExpandedValues(expanded map[string][]string, logger klog.Logg
 		}
 	}
 
-	if len(expandedValues) == len(anchor) {
-		parallel = append(parallel, expandedValues)
-	} else {
-		logger.V(1).Info("Mismatch in expanded label and value counts, skipping metric generation", "labelCount", len(anchor), "valueCount", len(expandedValues))
-	}
-
+	parallel = append(parallel, expandedValues)
 	sortLabels(anchor, parallel...)
 
 	return expandedValues
@@ -480,7 +487,7 @@ func writeMetricSamplesWithCount(
 	value string,
 	logger klog.Logger,
 ) (int64, error) {
-	expandedValues := extractAndSortExpandedValues(expanded, logger)
+	expandedValues := extractAndSortExpandedMetricValues(expanded, logger)
 
 	var sampleCount int64
 
