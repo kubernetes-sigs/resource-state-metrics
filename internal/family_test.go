@@ -16,6 +16,7 @@ limitations under the License.
 package internal
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -33,6 +34,30 @@ func TestFamilyType_rawFrom(t *testing.T) {
 			"metadata": map[string]interface{}{
 				"name":      "test-pod",
 				"namespace": "test-namespace",
+			},
+			"status": map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{
+						"type":   "Ready",
+						"status": "False",
+					},
+					map[string]interface{}{
+						"type":   "ContainersReady",
+						"status": "False",
+					},
+					map[string]interface{}{
+						"status": "True",
+						"type":   "PodReadyToStartContainers",
+					},
+					map[string]interface{}{
+						"status": "False",
+						"type":   "PodScheduled",
+					},
+					map[string]interface{}{
+						"status": "True",
+						"type":   "Initialized",
+					},
+				},
 			},
 		},
 	}
@@ -98,6 +123,34 @@ func TestFamilyType_rawFrom(t *testing.T) {
 				},
 			},
 			expected: "", // No resolver specified, should produce no metrics
+		},
+		{
+			name: "extended Pod status conditions with CEL resolver",
+			family: &FamilyType{
+				Family: v1alpha1.Family{
+					Name: "pod_status_conditions",
+					Help: "Condition status for each pod instance",
+					Metrics: []v1alpha1.Metric{
+						{
+							Labels: []v1alpha1.Label{
+								{
+									Name:  "type",
+									Value: "o.status.conditions.map(c, c.type)",
+								},
+							},
+							Value:    "o.status.conditions.map(c, int(c.status == 'True' ? 1 : 0))",
+							Resolver: v1alpha1.ResolverTypeCEL,
+						},
+					},
+				},
+			},
+			expected: strings.Join([]string{
+				"kube_customresource_pod_status_conditions{type=\"ContainersReady\",group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 0.000000",
+				"kube_customresource_pod_status_conditions{type=\"Initialized\",group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 1.000000",
+				"kube_customresource_pod_status_conditions{type=\"PodReadyToStartContainers\",group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 1.000000",
+				"kube_customresource_pod_status_conditions{type=\"PodScheduled\",group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 0.000000",
+				"kube_customresource_pod_status_conditions{type=\"Ready\",group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 0.000000",
+			}, "\n") + "\n",
 		},
 	}
 

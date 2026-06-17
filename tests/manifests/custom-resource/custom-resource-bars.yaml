@@ -43,15 +43,15 @@ spec:
     - "3.0"
     - "4.0"
   conditions:
+    - type: Ready
+      status: "True"
+      reason: Ready
     - type: Degraded
       status: "False"
       reason: Working
     - type: Progressing
       status: "Unknown"
       reason: Reconciling
-    - type: Ready
-      status: "True"
-      reason: Ready
   xProps:
     nonComposite: "example-value"
     compositeArray:
