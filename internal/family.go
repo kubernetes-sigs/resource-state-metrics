@@ -183,7 +183,7 @@ func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) 
 
 		resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet := resolveLabels(metricLabels, resolverInstance, unstructured.Object)
 
-		resolvedValue, ok := resolveMetricValue(resolverInstance, metric.Value, unstructured.Object, resolvedExpandedLabelSet)
+		resolvedValue, ok := resolveMetricValue(resolverInstance, metric.Value, unstructured.Object, &resolvedExpandedLabelSet)
 		if !ok {
 			logger.V(1).Error(fmt.Errorf("error resolving metric value %q", metric.Value), "skipping")
 			putBuilder(metricRawBuilder)
@@ -276,7 +276,7 @@ func inheritMetricLabels(f *FamilyType, metric *v1alpha1.Metric) []v1alpha1.Labe
 // a list (indexed keys like "fieldParent#N"), the values are collected in
 // order and stored in resolvedExpandedLabelSet under the sentinel key so that
 // writeMetricSamples can emit one sample per element.
-func resolveMetricValue(resolverInstance resolver.Resolver, valueExpr string, obj map[string]any, resolvedExpandedLabelSet map[string][]string) (string, bool) {
+func resolveMetricValue(resolverInstance resolver.Resolver, valueExpr string, obj map[string]any, resolvedExpandedLabelSet *map[string][]string) (string, bool) {
 	resolvedValueMap := resolverInstance.Resolve(valueExpr, obj)
 	if resolvedValue, found := resolvedValueMap[valueExpr]; found {
 		return resolvedValue, true
@@ -308,7 +308,7 @@ func resolveMetricValue(resolverInstance resolver.Resolver, valueExpr string, ob
 		return "", false
 	}
 
-	resolvedExpandedLabelSet[expandedValueSentinel] = expandedValues
+	(*resolvedExpandedLabelSet)[expandedValueSentinel] = expandedValues
 
 	return "", true
 }
@@ -337,15 +337,34 @@ func resolveLabels(labels []v1alpha1.Label, resolverInstance resolver.Resolver, 
 			// In this case, map keys become label names directly without concatenation.
 			isMapExpansion := strings.HasPrefix(label.Name, "_")
 
-			for k, v := range resolvedLabelset {
-				// Check if key has a suffix that satisfies the regex: "#\d+".
-				// This is used to identify list values in way that's resolver-agnostic.
-				if listIndexRegex.MatchString(k) {
-					// Use the user-specified label name as the expansion key so the
-					// generated metric carries e.g. `type="Ready"` rather than the
-					// internal field-parent token (e.g. `map="Ready"`).
-					resolvedExpandedLabelSet[sanitizeKey(label.Name)] = append(resolvedExpandedLabelSet[sanitizeKey(label.Name)], v)
+			// Collect list-indexed values in deterministic suffix order (#0, #1, ...)
+			// to match the order used by resolveMetricValue. Map iteration order is
+			// non-deterministic and would decouple labels from their metric values.
+			sanitizedName := sanitizeKey(label.Name)
 
+			for i := 0; ; i++ {
+				suffix := "#" + strconv.Itoa(i)
+
+				var match string
+
+				for k, v := range resolvedLabelset {
+					if strings.HasSuffix(k, suffix) {
+						match = v
+
+						break
+					}
+				}
+
+				if match == "" {
+					break
+				}
+
+				resolvedExpandedLabelSet[sanitizedName] = append(resolvedExpandedLabelSet[sanitizedName], match)
+			}
+
+			// Process non-list entries (map keys, non-composite values).
+			for k, v := range resolvedLabelset {
+				if listIndexRegex.MatchString(k) {
 					continue
 				}
 
@@ -365,21 +384,33 @@ func resolveLabels(labels []v1alpha1.Label, resolverInstance resolver.Resolver, 
 
 	return resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet
 }
-func sortLabels(keys, values []string) {
-	type kv struct{ k, v string }
 
-	pairs := make([]kv, len(keys))
-	for i := range keys {
-		pairs[i] = kv{keys[i], values[i]}
+// sortLabels sorts keys and applies the same permutation to all parallel slices.
+func sortLabels(keys []string, parallel ...[]string) {
+	indices := make([]int, len(keys))
+	for i := range indices {
+		indices[i] = i
 	}
 
-	slices.SortFunc(pairs, func(a, b kv) int {
-		return strings.Compare(a.k, b.k)
+	slices.SortFunc(indices, func(a, b int) int {
+		return strings.Compare(keys[a], keys[b])
 	})
 
-	for i, p := range pairs {
-		keys[i] = p.k
-		values[i] = p.v
+	reorder := func(s []string) {
+		sorted := make([]string, len(s))
+		for i, idx := range indices {
+			sorted[i] = s[idx]
+		}
+
+		copy(s, sorted)
+	}
+
+	reorder(keys)
+
+	for _, p := range parallel {
+		if len(p) == len(keys) {
+			reorder(p)
+		}
 	}
 }
 
@@ -407,6 +438,33 @@ func writeMetricSamplesWithCount(
 	// lists across resolvers.
 	expandedValues := expanded[expandedValueSentinel]
 	delete(expanded, expandedValueSentinel)
+
+	// Co-sort all expanded arrays (labels + values) to maintain index
+	// correspondence. Without this, sorting label values independently
+	// decouples them from their metric values.
+	if len(expanded) > 0 {
+		var sortKey string
+		for k := range expanded {
+			if sortKey == "" || k < sortKey {
+				sortKey = k
+			}
+		}
+
+		anchor := expanded[sortKey]
+		parallel := make([][]string, 0, len(expanded)+1)
+
+		for k := range expanded {
+			if k != sortKey {
+				parallel = append(parallel, expanded[k])
+			}
+		}
+
+		if len(expandedValues) == len(anchor) {
+			parallel = append(parallel, expandedValues)
+		}
+
+		sortLabels(anchor, parallel...)
+	}
 
 	var sampleCount int64
 
@@ -481,8 +539,6 @@ func writeExpandedSamples(writeFunc func([]string, []string) error, labelKeys, l
 		if len(expanded[k]) > seriesToGenerate {
 			seriesToGenerate = len(expanded[k])
 		}
-
-		slices.Sort(expanded[k])
 	}
 
 	for range seriesToGenerate {
