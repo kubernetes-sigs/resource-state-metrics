@@ -332,50 +332,52 @@ func resolveLabels(labels []v1alpha1.Label, resolverInstance resolver.Resolver, 
 		if val, ok := resolvedLabelset[label.Value]; ok {
 			resolvedLabelValues = append(resolvedLabelValues, val)
 			resolvedLabelKeys = append(resolvedLabelKeys, sanitizeKey(label.Name))
-		} else {
-			// Check if this is a map expansion label (name starts with "_").
-			// In this case, map keys become label names directly without concatenation.
-			isMapExpansion := strings.HasPrefix(label.Name, "_")
 
-			// Collect list-indexed values in deterministic suffix order (#0, #1, ...)
-			// to match the order used by resolveMetricValue. Map iteration order is
-			// non-deterministic and would decouple labels from their metric values.
-			sanitizedName := sanitizeKey(label.Name)
+			continue
+		}
 
-			for i := 0; ; i++ {
-				suffix := "#" + strconv.Itoa(i)
+		// Check if this is a map expansion label (name starts with "_").
+		// In this case, map keys become label names directly without concatenation.
+		isMapExpansion := strings.HasPrefix(label.Name, "_")
 
-				var match string
+		// Collect list-indexed values in deterministic suffix order (#0, #1, ...)
+		// to match the order used by resolveMetricValue. Map iteration order is
+		// non-deterministic and would decouple labels from their metric values.
+		sanitizedName := sanitizeKey(label.Name)
 
-				for k, v := range resolvedLabelset {
-					if strings.HasSuffix(k, suffix) {
-						match = v
+		for i := 0; ; i++ {
+			suffix := "#" + strconv.Itoa(i)
 
-						break
-					}
-				}
+			var match string
 
-				if match == "" {
+			for k, v := range resolvedLabelset {
+				if strings.HasSuffix(k, suffix) {
+					match = v
+
 					break
 				}
-
-				resolvedExpandedLabelSet[sanitizedName] = append(resolvedExpandedLabelSet[sanitizedName], match)
 			}
 
-			// Process non-list entries (map keys, non-composite values).
-			for k, v := range resolvedLabelset {
-				if listIndexRegex.MatchString(k) {
-					continue
-				}
+			if match == "" {
+				break
+			}
 
-				resolvedLabelValues = append(resolvedLabelValues, v)
+			resolvedExpandedLabelSet[sanitizedName] = append(resolvedExpandedLabelSet[sanitizedName], match)
+		}
 
-				if isMapExpansion {
-					// Map expansion: use the map key directly as the label name
-					resolvedLabelKeys = append(resolvedLabelKeys, sanitizeKey(k))
-				} else {
-					resolvedLabelKeys = append(resolvedLabelKeys, sanitizeKey(label.Name+k))
-				}
+		// Process non-list entries (map keys, non-composite values).
+		for k, v := range resolvedLabelset {
+			if listIndexRegex.MatchString(k) {
+				continue
+			}
+
+			resolvedLabelValues = append(resolvedLabelValues, v)
+
+			if isMapExpansion {
+				// Map expansion: use the map key directly as the label name
+				resolvedLabelKeys = append(resolvedLabelKeys, sanitizeKey(k))
+			} else {
+				resolvedLabelKeys = append(resolvedLabelKeys, sanitizeKey(label.Name+k))
 			}
 		}
 	}
@@ -419,17 +421,11 @@ func sanitizeKey(s string) string {
 	return strcase.ToSnake(nonWordRegex.ReplaceAllString(s, "_"))
 }
 
-// writeMetricSamplesWithCount writes single or expanded metric values and returns the sample count.
-func writeMetricSamplesWithCount(
-	builder *strings.Builder,
-	name string,
-	kind MetricKind,
-	raw *unstructured.Unstructured,
-	keys, values []string,
-	expanded map[string][]string,
-	value string,
-	logger klog.Logger,
-) (int64, error) {
+// extractAndSortExpandedValues extracts expanded values from the sentinel key and co-sorts them with labels to maintain index correspondence.
+// The sentinel key is removed from the expanded map after extraction.
+// If there is a length mismatch between the expanded values and labels, a warning is logged and values are not co-sorted to avoid misalignment.
+// If multiple label keys are present, they are co-sorted together based on the anchor key (the lexicographically smallest label key) to maintain their relative order.
+func extractAndSortExpandedValues(expanded map[string][]string, logger klog.Logger) []string {
 	// Extract per-sample values stored under the sentinel when the value
 	// expression resolved to a list. The sentinel is not a real label.
 	// NOTE that we do not want resolver-specific logic making its way into
@@ -442,42 +438,62 @@ func writeMetricSamplesWithCount(
 	// Co-sort all expanded arrays (labels + values) to maintain index
 	// correspondence. Without this, sorting label values independently
 	// decouples them from their metric values.
-	if len(expanded) > 0 {
-		var sortKey string
-		for k := range expanded {
-			if sortKey == "" || k < sortKey {
-				sortKey = k
-			}
-		}
-
-		anchor := expanded[sortKey]
-		parallel := make([][]string, 0, len(expanded)+1)
-
-		for k := range expanded {
-			if k != sortKey {
-				parallel = append(parallel, expanded[k])
-			}
-		}
-
-		if len(expandedValues) == len(anchor) {
-			parallel = append(parallel, expandedValues)
-		}
-
-		sortLabels(anchor, parallel...)
+	if len(expanded) == 0 {
+		return expandedValues
 	}
+
+	var sortKey string
+	for k := range expanded {
+		if sortKey == "" || k < sortKey {
+			sortKey = k
+		}
+	}
+
+	anchor := expanded[sortKey]
+	parallel := make([][]string, 0, len(expanded)+1)
+
+	for k := range expanded {
+		if k != sortKey {
+			parallel = append(parallel, expanded[k])
+		}
+	}
+
+	if len(expandedValues) == len(anchor) {
+		parallel = append(parallel, expandedValues)
+	} else {
+		logger.V(1).Info("Mismatch in expanded label and value counts, skipping metric generation", "labelCount", len(anchor), "valueCount", len(expandedValues))
+	}
+
+	sortLabels(anchor, parallel...)
+
+	return expandedValues
+}
+
+// writeMetricSamplesWithCount writes single or expanded metric values and returns the sample count.
+func writeMetricSamplesWithCount(
+	builder *strings.Builder,
+	name string,
+	kind MetricKind,
+	raw *unstructured.Unstructured,
+	keys, values []string,
+	expanded map[string][]string,
+	value string,
+	logger klog.Logger,
+) (int64, error) {
+	expandedValues := extractAndSortExpandedValues(expanded, logger)
 
 	var sampleCount int64
 
-	i := 0
+	expandedValueIndex := 0
 	writeMetric := func(k, v []string) error {
 		builder.WriteString(kubeCustomResourcePrefix + name)
 
 		currentValue := value
-		if i < len(expandedValues) {
-			currentValue = expandedValues[i]
+		if expandedValueIndex < len(expandedValues) {
+			currentValue = expandedValues[expandedValueIndex]
 		}
 
-		i++
+		expandedValueIndex++
 		sampleCount++
 
 		return writeMetricTo(

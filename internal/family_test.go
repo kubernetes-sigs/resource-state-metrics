@@ -22,6 +22,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/klog/v2"
 )
 
 func TestFamilyType_rawFrom(t *testing.T) {
@@ -165,6 +166,115 @@ func TestFamilyType_rawFrom(t *testing.T) {
 			// Verify sample count is reasonable (should be at least 1 for non-empty results)
 			if tt.expected != "" && sampleCount == 0 {
 				t.Errorf("expected non-zero sample count for non-empty metric string")
+			}
+		})
+	}
+}
+
+func Test_extractAndSortExpandedValues(t *testing.T) {
+	t.Parallel()
+
+	logger := klog.Background()
+
+	tests := []struct {
+		name              string
+		expanded          map[string][]string
+		wantValues        []string
+		wantExpandedAfter map[string][]string // expected state of expanded map after call
+	}{
+		{
+			name:              "empty map returns nil",
+			expanded:          map[string][]string{},
+			wantValues:        nil,
+			wantExpandedAfter: map[string][]string{},
+		},
+		{
+			name: "sentinel only, no labels",
+			expanded: map[string][]string{
+				expandedValueSentinel: {"10", "20", "30"},
+			},
+			wantValues:        []string{"10", "20", "30"},
+			wantExpandedAfter: map[string][]string{},
+		},
+		{
+			name: "labels only, no sentinel",
+			expanded: map[string][]string{
+				"type": {"Ready", "Initialized"},
+			},
+			wantValues: nil,
+			wantExpandedAfter: map[string][]string{
+				"type": {"Initialized", "Ready"},
+			},
+		},
+		{
+			name: "co-sorts labels and values by anchor key",
+			expanded: map[string][]string{
+				expandedValueSentinel: {"1", "0"},
+				"type":                {"Ready", "Initialized"},
+			},
+			wantValues: []string{"0", "1"},
+			wantExpandedAfter: map[string][]string{
+				"type": {"Initialized", "Ready"},
+			},
+		},
+		{
+			name: "multiple label keys co-sorted together",
+			expanded: map[string][]string{
+				expandedValueSentinel: {"100", "200", "300"},
+				"node":                {"compute-2", "control-plane-1", "compute-1"},
+				"zone":                {"us-east", "eu-west", "ap-south"},
+			},
+			wantValues: []string{"300", "100", "200"},
+			wantExpandedAfter: map[string][]string{
+				"node": {"compute-1", "compute-2", "control-plane-1"},
+				"zone": {"ap-south", "us-east", "eu-west"},
+			},
+		},
+		{
+			name: "anchor key is the lexicographically smallest label key",
+			expanded: map[string][]string{
+				expandedValueSentinel: {"500", "100", "300"},
+				// "app" < "node" < "zone" lexicographically, so "app" is the anchor.
+				// Sorting by "app" values: ["beta", "alpha", "gamma"] -> indices [1,0,2]
+				// produces: app=["alpha","beta","gamma"], node=["n2","n1","n3"], zone=["z2","z1","z3"], values=["100","500","300"]
+				"zone": {"z1", "z2", "z3"},
+				"node": {"n1", "n2", "n3"},
+				"app":  {"beta", "alpha", "gamma"},
+			},
+			wantValues: []string{"100", "500", "300"},
+			wantExpandedAfter: map[string][]string{
+				"app":  {"alpha", "beta", "gamma"},
+				"node": {"n2", "n1", "n3"},
+				"zone": {"z2", "z1", "z3"},
+			},
+		},
+		{
+			name: "mismatched value and label counts logs warning",
+			expanded: map[string][]string{
+				expandedValueSentinel: {"1", "2"},
+				"type":                {"Ready", "Initialized", "PodScheduled"},
+			},
+			// Values are NOT appended to parallel slices due to length mismatch,
+			// but labels are still sorted.
+			wantValues: []string{"1", "2"},
+			wantExpandedAfter: map[string][]string{
+				"type": {"Initialized", "PodScheduled", "Ready"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := extractAndSortExpandedValues(tt.expanded, logger)
+
+			if diff := cmp.Diff(tt.wantValues, got); diff != "" {
+				t.Errorf("returned values mismatch (-want +got):\n%s", diff)
+			}
+
+			if diff := cmp.Diff(tt.wantExpandedAfter, tt.expanded); diff != "" {
+				t.Errorf("expanded map state mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
