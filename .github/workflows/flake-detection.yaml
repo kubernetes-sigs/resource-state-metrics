@@ -1,0 +1,112 @@
+---
+# Copyright 2026 The Kubernetes resource-state-metrics Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Runs test jobs multiple times via a matrix strategy to surface flaky tests
+# before merging. Triggered when the "lgtm" label is added to a PR.
+#
+# Why matrix over a loop: each iteration appears as a separate check in the
+# GitHub UI, making it easy to see how many iterations failed and inspect logs
+# per iteration, rather than digging through a single job's output.
+#
+# Caching: actions/setup-go caches the Go module download cache by default, so
+# the repeated `make setup` (go install) calls across matrix iterations hit
+# warm cache after the first run.
+name: flake-detection
+on:
+  pull_request_target:
+    types:
+      - labeled
+    branches:
+      - main
+jobs:
+  test-unit:
+    if: github.event.label.name == 'lgtm'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        iteration: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - name: Checkout the codebase
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+      - name: Setup dependencies
+        run: make setup
+      - name: Run unit tests (iteration ${{ matrix.iteration }})
+        run: make test_unit
+  test-e2e:
+    if: github.event.label.name == 'lgtm'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        iteration: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - name: Checkout the codebase
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+      - name: Setup dependencies
+        run: make setup
+      - name: Run e2e tests (iteration ${{ matrix.iteration }})
+        run: make test_e2e
+  compare-metrics:
+    if: github.event.label.name == 'lgtm'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        iteration: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - name: Checkout the codebase
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+      - name: Setup dependencies
+        run: make setup
+      - name: Create kind cluster
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        with:
+          cluster_name: kind
+      - name: Start controller
+        env:
+          KUBECONFIG: /home/runner/.kube/config
+        run: |
+          kind export kubeconfig
+          nohup bash -c 'V=10 CREATED_AT_EPOCH=0 make local' &>/tmp/controller.log &
+      - name: Wait for the build to complete
+        run: sleep 60
+      - name: Apply testdata
+        run: make apply_testdata
+      - name: Wait for metrics
+        run: sleep 10
+      - name: Compare metrics (iteration ${{ matrix.iteration }})
+        run: make compare_metrics
+      - name: Print controller logs
+        if: always()
+        run: cat /tmp/controller.log || echo "(no controller logs found)"
