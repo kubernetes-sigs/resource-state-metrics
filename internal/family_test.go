@@ -278,3 +278,65 @@ func Test_extractAndSortExpandedMetricValues(t *testing.T) {
 		})
 	}
 }
+
+func Test_collectIndexedResolvedValues(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		resolved map[string]string
+		want     []string
+	}{
+		{
+			name:     "empty map returns nil",
+			resolved: map[string]string{},
+			want:     nil,
+		},
+		{
+			name: "collects indexed values in numeric suffix order",
+			resolved: map[string]string{
+				"field#1": "beta",
+				"field#0": "alpha",
+				"field#2": "gamma",
+			},
+			want: []string{"alpha", "beta", "gamma"},
+		},
+		{
+			name: "preserves empty string values",
+			resolved: map[string]string{
+				"field#0": "",
+				"field#1": "present",
+			},
+			want: []string{"", "present"},
+		},
+		{
+			name: "stops at first missing index",
+			resolved: map[string]string{
+				"field#0": "alpha",
+				"field#2": "gamma",
+			},
+			want: []string{"alpha"},
+		},
+		{
+			name: "ignores non indexed keys",
+			resolved: map[string]string{
+				"field":   "scalar",
+				"other#0": "alpha",
+				"misc":    "value",
+			},
+			want: []string{"alpha"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := collectIndexedResolvedValues(tt.resolved)
+
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("collectIndexedResolvedValues() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

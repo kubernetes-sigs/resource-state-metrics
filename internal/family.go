@@ -283,27 +283,7 @@ func resolveMetricValue(resolverInstance resolver.Resolver, valueExpr string, ob
 		return resolvedValue, true
 	}
 
-	var expandedValues []string
-
-	for i := 0; ; i++ {
-		suffix := "#" + strconv.Itoa(i)
-
-		var match string
-
-		for k, v := range resolvedValueMap {
-			if strings.HasSuffix(k, suffix) {
-				match = v
-
-				break
-			}
-		}
-
-		if match == "" {
-			break
-		}
-
-		expandedValues = append(expandedValues, match)
-	}
+	expandedValues := collectIndexedResolvedValues(resolvedValueMap)
 
 	if len(expandedValues) == 0 {
 		return "", false
@@ -345,26 +325,7 @@ func resolveLabels(labels []v1alpha1.Label, resolverInstance resolver.Resolver, 
 		// to match the order used by resolveMetricValue. Map iteration order is
 		// non-deterministic and would decouple labels from their metric values.
 		sanitizedName := sanitizeKey(label.Name)
-
-		for i := 0; ; i++ {
-			suffix := "#" + strconv.Itoa(i)
-
-			var match string
-
-			for k, v := range resolvedLabelset {
-				if strings.HasSuffix(k, suffix) {
-					match = v
-
-					break
-				}
-			}
-
-			if match == "" {
-				break
-			}
-
-			resolvedExpandedLabelSet[sanitizedName] = append(resolvedExpandedLabelSet[sanitizedName], match)
-		}
+		resolvedExpandedLabelSet[sanitizedName] = append(resolvedExpandedLabelSet[sanitizedName], collectIndexedResolvedValues(resolvedLabelset)...)
 
 		// Process non-list entries (map keys, non-composite values).
 		for k, v := range resolvedLabelset {
@@ -421,6 +382,37 @@ func sortLabels(keys []string, parallel ...[]string) {
 			reorder(p)
 		}
 	}
+}
+
+// collectIndexedResolvedValues returns resolver values stored under numbered
+// keys with #0, #1, ... suffixes, preserving empty string values.
+func collectIndexedResolvedValues(resolved map[string]string) []string {
+	var values []string
+
+	for i := 0; ; i++ {
+		suffix := "#" + strconv.Itoa(i)
+
+		var match string
+
+		found := false
+
+		for k, v := range resolved {
+			if strings.HasSuffix(k, suffix) {
+				match = v
+				found = true
+
+				break
+			}
+		}
+
+		if !found {
+			break
+		}
+
+		values = append(values, match)
+	}
+
+	return values
 }
 
 // sanitizeKey converts a label key to snake_case and strips non-alphanumeric characters.
