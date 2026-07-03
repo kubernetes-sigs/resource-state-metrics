@@ -13,6 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 name: flake-detection
+# pull_request_target grants write permissions by default; restrict to
+# read-only so a compromised PR cannot modify repo contents or PR state.
+# contents: read — allows checking out the repository (required by actions/checkout).
+# pull-requests: read — allows accessing PR metadata (head SHA, labels) without
+# granting the ability to modify the PR (e.g., merge, comment, or update labels).
+permissions:
+  contents: read
+  pull-requests: read
 on:
   pull_request_target:
     types:

@@ -24,6 +24,8 @@
 # the repeated `make setup` (go install) calls across matrix iterations hit
 # warm cache after the first run.
 name: tests
+permissions:
+  contents: read
 on:
   workflow_call:
     inputs:
@@ -43,7 +45,7 @@ jobs:
     steps:
       - id: set-matrix
         run: |
-          echo "matrix=$(python3 -c "import json; print(json.dumps({'iteration': list(range(1, ${{ inputs.iterations }} + 1))}))")" >> "$GITHUB_OUTPUT"
+          echo "matrix=$(python3 -c 'import json; print(json.dumps({"iteration": list(range(1, ${{ inputs.iterations }} + 1))}))')" >> "$GITHUB_OUTPUT"
   test-unit:
     needs: setup
     runs-on: ubuntu-latest
