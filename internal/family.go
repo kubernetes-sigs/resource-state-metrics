@@ -18,6 +18,7 @@ package internal
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -282,27 +283,7 @@ func resolveMetricValue(resolverInstance resolver.Resolver, valueExpr string, ob
 		return resolvedValue, true
 	}
 
-	var expandedValues []string
-
-	for i := 0; ; i++ {
-		suffix := "#" + strconv.Itoa(i)
-
-		var match string
-
-		for k, v := range resolvedValueMap {
-			if strings.HasSuffix(k, suffix) {
-				match = v
-
-				break
-			}
-		}
-
-		if match == "" {
-			break
-		}
-
-		expandedValues = append(expandedValues, match)
-	}
+	expandedValues := collectIndexedResolvedValues(resolvedValueMap)
 
 	if len(expandedValues) == 0 {
 		return "", false
@@ -332,31 +313,33 @@ func resolveLabels(labels []v1alpha1.Label, resolverInstance resolver.Resolver, 
 		if val, ok := resolvedLabelset[label.Value]; ok {
 			resolvedLabelValues = append(resolvedLabelValues, val)
 			resolvedLabelKeys = append(resolvedLabelKeys, sanitizeKey(label.Name))
-		} else {
-			// Check if this is a map expansion label (name starts with "_").
-			// In this case, map keys become label names directly without concatenation.
-			isMapExpansion := strings.HasPrefix(label.Name, "_")
 
-			for k, v := range resolvedLabelset {
-				// Check if key has a suffix that satisfies the regex: "#\d+".
-				// This is used to identify list values in way that's resolver-agnostic.
-				if listIndexRegex.MatchString(k) {
-					// Use the user-specified label name as the expansion key so the
-					// generated metric carries e.g. `type="Ready"` rather than the
-					// internal field-parent token (e.g. `map="Ready"`).
-					resolvedExpandedLabelSet[sanitizeKey(label.Name)] = append(resolvedExpandedLabelSet[sanitizeKey(label.Name)], v)
+			continue
+		}
 
-					continue
-				}
+		// Check if this is a map expansion label (name starts with "_").
+		// In this case, map keys become label names directly without concatenation.
+		isMapExpansion := strings.HasPrefix(label.Name, "_")
 
-				resolvedLabelValues = append(resolvedLabelValues, v)
+		// Collect list-indexed values in deterministic suffix order (#0, #1, ...)
+		// to match the order used by resolveMetricValue. Map iteration order is
+		// non-deterministic and would decouple labels from their metric values.
+		sanitizedName := sanitizeKey(label.Name)
+		resolvedExpandedLabelSet[sanitizedName] = append(resolvedExpandedLabelSet[sanitizedName], collectIndexedResolvedValues(resolvedLabelset)...)
 
-				if isMapExpansion {
-					// Map expansion: use the map key directly as the label name
-					resolvedLabelKeys = append(resolvedLabelKeys, sanitizeKey(k))
-				} else {
-					resolvedLabelKeys = append(resolvedLabelKeys, sanitizeKey(label.Name+k))
-				}
+		// Process non-list entries (map keys, non-composite values).
+		for k, v := range resolvedLabelset {
+			if listIndexRegex.MatchString(k) {
+				continue
+			}
+
+			resolvedLabelValues = append(resolvedLabelValues, v)
+
+			if isMapExpansion {
+				// Map expansion: use the map key directly as the label name
+				resolvedLabelKeys = append(resolvedLabelKeys, sanitizeKey(k))
+			} else {
+				resolvedLabelKeys = append(resolvedLabelKeys, sanitizeKey(label.Name+k))
 			}
 		}
 	}
@@ -365,27 +348,125 @@ func resolveLabels(labels []v1alpha1.Label, resolverInstance resolver.Resolver, 
 
 	return resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet
 }
-func sortLabels(keys, values []string) {
-	type kv struct{ k, v string }
 
-	pairs := make([]kv, len(keys))
-	for i := range keys {
-		pairs[i] = kv{keys[i], values[i]}
+// sortLabels sorts keys alphabetically and applies the same permutation to all
+// parallel slices, so that positionally-correlated data stays aligned with its
+// corresponding key after sorting. For example, given label keys
+// ["Ready", "Degraded", "Progressing"] with label values
+// ["True", "False", "Unknown"], sorting produces keys
+// ["Degraded", "Progressing", "Ready"] and values ["False", "Unknown", "True"],
+// preserving the pairing Degraded→"False", Progressing→"Unknown", Ready→"True".
+func sortLabels(keys []string, parallel ...[]string) {
+	indices := make([]int, len(keys))
+	for i := range indices {
+		indices[i] = i
 	}
 
-	slices.SortFunc(pairs, func(a, b kv) int {
-		return strings.Compare(a.k, b.k)
+	slices.SortFunc(indices, func(a, b int) int {
+		return strings.Compare(keys[a], keys[b])
 	})
 
-	for i, p := range pairs {
-		keys[i] = p.k
-		values[i] = p.v
+	reorder := func(s []string) {
+		sorted := make([]string, len(s))
+		for i, idx := range indices {
+			sorted[i] = s[idx]
+		}
+
+		copy(s, sorted)
 	}
+
+	reorder(keys)
+
+	for _, p := range parallel {
+		if len(p) == len(keys) {
+			reorder(p)
+		}
+	}
+}
+
+// collectIndexedResolvedValues returns resolver values stored under numbered
+// keys with #0, #1, ... suffixes, preserving empty string values.
+func collectIndexedResolvedValues(resolved map[string]string) []string {
+	var values []string
+
+	for i := 0; ; i++ {
+		suffix := "#" + strconv.Itoa(i)
+
+		var match string
+
+		found := false
+
+		for k, v := range resolved {
+			if strings.HasSuffix(k, suffix) {
+				match = v
+				found = true
+
+				break
+			}
+		}
+
+		if !found {
+			break
+		}
+
+		values = append(values, match)
+	}
+
+	return values
 }
 
 // sanitizeKey converts a label key to snake_case and strips non-alphanumeric characters.
 func sanitizeKey(s string) string {
 	return strcase.ToSnake(nonWordRegex.ReplaceAllString(s, "_"))
+}
+
+// extractAndSortExpandedMetricValues extracts expanded values from the sentinel key and co-sorts them with labels to maintain index correspondence.
+// The sentinel key is removed from the expanded map after extraction.
+// If there is a length mismatch between the expanded values and labels, a warning is logged and values are not co-sorted to avoid misalignment.
+// If multiple label keys are present, they are co-sorted together based on the anchor key (the lexicographically smallest label key) to maintain their relative order.
+func extractAndSortExpandedMetricValues(expanded map[string][]string, logger klog.Logger) []string {
+	// Extract per-sample values stored under the sentinel when the value
+	// expression resolved to a list. The sentinel is not a real label.
+	// NOTE that we do not want resolver-specific logic making its way into
+	// non-resolver-specific code, however, this is general enough that it can be
+	// reasonably justified as an implementation detail of how we handle value
+	// lists across resolvers.
+	expandedValues := expanded[expandedValueSentinel]
+	delete(expanded, expandedValueSentinel)
+
+	// Co-sort all expanded arrays (labels + values) to maintain index
+	// correspondence. Without this, sorting label values independently
+	// decouples them from their metric values.
+	if len(expanded) == 0 {
+		return expandedValues
+	}
+
+	var sortKey string
+	for k := range expanded {
+		if sortKey == "" || k < sortKey {
+			sortKey = k
+		}
+	}
+
+	anchor := expanded[sortKey]
+	if len(expandedValues) != len(anchor) {
+		logger.V(1).Info("Mismatch in expanded label and value counts, skipping expanded label sorting", "labelCount", len(anchor), "valueCount", len(expandedValues))
+
+		return expandedValues
+	}
+
+	parallel := make([][]string, 0, len(expanded)+1)
+
+	for k := range expanded {
+		if k != sortKey {
+			parallel = append(parallel, expanded[k])
+		}
+	}
+
+	parallel = append(parallel, expandedValues)
+	sortLabels(anchor, parallel...)
+
+	return expandedValues
 }
 
 // writeMetricSamplesWithCount writes single or expanded metric values and returns the sample count.
@@ -399,27 +480,20 @@ func writeMetricSamplesWithCount(
 	value string,
 	logger klog.Logger,
 ) (int64, error) {
-	// Extract per-sample values stored under the sentinel when the value
-	// expression resolved to a list. The sentinel is not a real label.
-	// NOTE that we do not want resolver-specific logic making its way into
-	// non-resolver-specific code, however, this is general enough that it can be
-	// reasonably justified as an implementation detail of how we handle value
-	// lists across resolvers.
-	expandedValues := expanded[expandedValueSentinel]
-	delete(expanded, expandedValueSentinel)
+	expandedValues := extractAndSortExpandedMetricValues(expanded, logger)
 
 	var sampleCount int64
 
-	i := 0
+	expandedValueIndex := 0
 	writeMetric := func(k, v []string) error {
 		builder.WriteString(kubeCustomResourcePrefix + name)
 
 		currentValue := value
-		if i < len(expandedValues) {
-			currentValue = expandedValues[i]
+		if expandedValueIndex < len(expandedValues) {
+			currentValue = expandedValues[expandedValueIndex]
 		}
 
-		i++
+		expandedValueIndex++
 		sampleCount++
 
 		return writeMetricTo(
@@ -475,14 +549,14 @@ func writeSingleSample(writeFunc func([]string, []string) error, keys, values []
 func writeExpandedSamples(writeFunc func([]string, []string) error, labelKeys, labelValues []string, expanded map[string][]string, logger klog.Logger) error {
 	var seriesToGenerate int
 
-	for k := range expanded {
+	// Sort expanded keys to ensure deterministic label ordering.
+	// Map iteration order is non-deterministic, so we must sort explicitly.
+	for _, k := range slices.Sorted(maps.Keys(expanded)) {
 		labelKeys = append(labelKeys, k)
 
 		if len(expanded[k]) > seriesToGenerate {
 			seriesToGenerate = len(expanded[k])
 		}
-
-		slices.Sort(expanded[k])
 	}
 
 	for range seriesToGenerate {

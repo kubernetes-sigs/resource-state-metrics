@@ -1,0 +1,76 @@
+---
+# Copyright 2026 The Kubernetes resource-state-metrics Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+name: resourcemetricsmonitor-bars-anchor-key
+description: >
+  Tests that multiple expanded label keys are co-sorted by the anchor key
+  (the lexicographically smallest label key name). Here "reason" < "type",
+  so sorting is driven by the "reason" values. This ensures that labels and
+  metric values maintain correct positional correspondence after sorting.
+  For example, reason="Ready" must pair with type="Ready" and value=1,
+  not with an unrelated type or value from a different list position.
+in:
+  apiVersion: resource-state-metrics.instrumentation.k8s-sigs.io/v1alpha1
+  kind: ResourceMetricsMonitor
+  metadata:
+    name: resourcemetricsmonitor-bars-anchor-key
+    namespace: default
+  spec:
+    configuration:
+      stores:
+        - group: "samplecontroller.k8s.io"
+          version: "v1beta1"
+          kind: "Bar"
+          resource: "bars"
+          families:
+            - name: "bars_conditions_anchor_key"
+              help: "Condition status with multiple expanded labels to verify anchor key sorting"
+              metrics:
+                - resolver: "cel"
+                  labels:
+                    - name: "reason"
+                      value: "o.spec.conditions.map(c, c.reason)"
+                    - name: "type"
+                      value: "o.spec.conditions.map(c, c.type)"
+                  value: "o.spec.conditions.map(c, int(c.status == 'True' ? 1 : 0))"
+metrics:
+  - "# HELP kube_customresource_bars_conditions_anchor_key Condition status with multiple expanded labels to verify anchor key sorting"
+  - "# TYPE kube_customresource_bars_conditions_anchor_key gauge"
+  # test-sample: conditions are [{Ready,True,Ready},{Degraded,False,Working},{Progressing,Unknown,Reconciling}]
+  # Anchor key is "reason" (lexicographically smallest). Sorting by reason values:
+  #   "Ready" < "Reconciling" < "Working" → reorders positions [0,2,1]
+  #   reason=["Ready","Reconciling","Working"], type=["Ready","Progressing","Degraded"], values=[1,0,0]
+  - 'kube_customresource_bars_conditions_anchor_key{reason="Ready",type="Ready",group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample",namespace="default"} 1.000000'
+  - 'kube_customresource_bars_conditions_anchor_key{reason="Reconciling",type="Progressing",group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample",namespace="default"} 0.000000'
+  - 'kube_customresource_bars_conditions_anchor_key{reason="Working",type="Degraded",group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample",namespace="default"} 0.000000'
+  # test-sample-secondary: conditions are [{Ready,False,NotReady},{Degraded,True,ConfigError},{Progressing,True,Reconciling}]
+  # Sorting by reason: "ConfigError" < "NotReady" < "Reconciling" → reorders positions [1,0,2]
+  #   reason=["ConfigError","NotReady","Reconciling"], type=["Degraded","Ready","Progressing"], values=[1,0,1]
+  - 'kube_customresource_bars_conditions_anchor_key{reason="ConfigError",type="Degraded",group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample-secondary",namespace="default"} 1.000000'
+  - 'kube_customresource_bars_conditions_anchor_key{reason="NotReady",type="Ready",group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample-secondary",namespace="default"} 0.000000'
+  - 'kube_customresource_bars_conditions_anchor_key{reason="Reconciling",type="Progressing",group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample-secondary",namespace="default"} 1.000000'
+status:
+  cardinality:
+    total: 6
+    thresholdsExceeded: false
+  conditions:
+    - type: Processed
+      status: "True"
+      reason: EventHandlerSucceeded
+    - type: CardinalityCutoff
+      status: "False"
+      reason: CardinalityOK
+    - type: CardinalityWarning
+      status: "False"
+      reason: CardinalityOK

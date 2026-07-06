@@ -28,12 +28,12 @@ spec:
   environmentType: dev
   replicas: 1
   conditions:
+    - type: Ready
+      status: "False"
+      reason: NotReady
     - type: Degraded
       status: "True"
       reason: ConfigError
     - type: Progressing
       status: "True"
       reason: Reconciling
-    - type: Ready
-      status: "False"
-      reason: NotReady
