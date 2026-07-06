@@ -64,7 +64,8 @@ BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
 GIT_COMMIT = $(shell git rev-parse --short HEAD)
 RUNNER = $(shell id -u -n)@$(shell hostname)
 VERSION = $(shell cat VERSION)
-LDFLAGS := -s -w \
+GCFLAGS ?=
+LDFLAGS ?= -s -w \
 	-X ${COMMON}/version.Branch=${BRANCH} \
 	-X ${COMMON}/version.BuildDate=${BUILD_DATE} \
 	-X ${COMMON}/version.BuildUser=${RUNNER} \
@@ -169,7 +170,7 @@ image: $(PROJECT_NAME)
 	@docker build -t $(PROJECT_NAME):$(BUILD_TAG) .
 
 $(PROJECT_NAME): $(GO_FILES)
-	@$(GO) build -a -installsuffix cgo -ldflags "$(LDFLAGS)" -o $@
+	$(GO) build -a -installsuffix cgo -ldflags "$(LDFLAGS)" -gcflags "$(GCFLAGS)" -o $@
 
 .PHONY: build
 build: $(PROJECT_NAME)
