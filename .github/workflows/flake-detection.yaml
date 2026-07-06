@@ -29,6 +29,23 @@ on:
       - main
 jobs:
   tests:
+    # Match only the event that adds the lgtm label. The workflow fires
+    # on every "labeled" event, so adding other labels (approved, size/XL)
+    # produces a "skipped" status here. This is intentional:
+    #
+    # - contains(..labels.*.name, 'lgtm') would re-run the full 10-iteration
+    #   flake suite on every subsequent label addition — wasteful CI time
+    #   for no benefit when flake detection already passed.
+    # - Filtering by label name at the trigger level is not supported by
+    #   GitHub Actions for pull_request_target events.
+    # - Moving the condition to step-level is not possible because the job
+    #   calls a reusable workflow via "uses:", which only works at job level.
+    #
+    # The "skipped" status is harmless because flake-detection is not a
+    # required status check in branch protection rules. To avoid a spurious
+    # "skipped" overwriting a prior success, reviewers should comment /lgtm
+    # last — not grouped with /approve, since whichever label lands second
+    # would re-trigger this workflow with a non-matching event.
     if: github.event.label.name == 'lgtm'
     uses: ./.github/workflows/tests.yaml
     with:
