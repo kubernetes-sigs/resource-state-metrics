@@ -184,7 +184,7 @@ func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) 
 
 		resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet := resolveLabels(metricLabels, resolverInstance, unstructured.Object)
 
-		resolvedValue, ok := resolveMetricValue(resolverInstance, metric.Value, unstructured.Object, &resolvedExpandedLabelSet)
+		resolvedValue, ok := resolveMetricValue(resolverInstance, metric.Value, unstructured.Object, resolvedExpandedLabelSet)
 		if !ok {
 			logger.V(1).Error(fmt.Errorf("error resolving metric value %q", metric.Value), "skipping")
 			putBuilder(metricRawBuilder)
@@ -277,7 +277,7 @@ func inheritMetricLabels(f *FamilyType, metric *v1alpha1.Metric) []v1alpha1.Labe
 // a list (indexed keys like "fieldParent#N"), the values are collected in
 // order and stored in resolvedExpandedLabelSet under the sentinel key so that
 // writeMetricSamples can emit one sample per element.
-func resolveMetricValue(resolverInstance resolver.Resolver, valueExpr string, obj map[string]any, resolvedExpandedLabelSet *map[string][]string) (string, bool) {
+func resolveMetricValue(resolverInstance resolver.Resolver, valueExpr string, obj map[string]any, resolvedExpandedLabelSet map[string][]string) (string, bool) {
 	resolvedValueMap := resolverInstance.Resolve(valueExpr, obj)
 	if resolvedValue, found := resolvedValueMap[valueExpr]; found {
 		return resolvedValue, true
@@ -289,7 +289,7 @@ func resolveMetricValue(resolverInstance resolver.Resolver, valueExpr string, ob
 		return "", false
 	}
 
-	(*resolvedExpandedLabelSet)[expandedValueSentinel] = expandedValues
+	resolvedExpandedLabelSet[expandedValueSentinel] = expandedValues
 
 	return "", true
 }
