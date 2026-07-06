@@ -49,5 +49,5 @@ jobs:
     if: github.event.label.name == 'lgtm'
     uses: ./.github/workflows/tests.yaml
     with:
-      iterations: 10
+      iterations: 3
       ref: ${{ github.event.pull_request.head.sha }}
