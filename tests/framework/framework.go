@@ -32,6 +32,7 @@ import (
 
 	"github.com/kubernetes-sigs/resource-state-metrics/internal"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	rsmclientset "github.com/kubernetes-sigs/resource-state-metrics/pkg/generated/clientset/versioned"
 	rsmfake "github.com/kubernetes-sigs/resource-state-metrics/pkg/generated/clientset/versioned/fake"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/options"
@@ -40,15 +41,21 @@ import (
 	apiextensionsfake "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/fake"
 	apiextensionsinformers "k8s.io/apiextensions-apiserver/pkg/client/informers/externalversions"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/client-go/discovery"
+	memorycache "k8s.io/client-go/discovery/cached/memory"
 	fakediscovery "k8s.io/client-go/discovery/fake"
+	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/yaml"
@@ -78,8 +85,10 @@ type Framework struct {
 	controller          *internal.Controller
 	crdInformer         cache.SharedIndexInformer
 	crdInformerFactory  apiextensionsinformers.SharedInformerFactory
-	dynamicClient       *dynamicfake.FakeDynamicClient
+	dynamicClient       dynamic.Interface
 	kubeClient          kubernetes.Interface
+	discoveryClient     discovery.DiscoveryInterface
+	restMapper          meta.RESTMapper
 	scheme              *runtime.Scheme
 	discoveryResources  []*metav1.APIResourceList
 }
@@ -127,6 +136,53 @@ func NewInforming(ctx context.Context, initialObjects ...runtime.Object) *Framew
 	return f
 }
 
+// NewForConfig creates a new test framework backed by real clients from a
+// rest.Config. This is intended for envtest-style tests where a real
+// kube-apiserver is available and CRDs are installed externally (e.g. via
+// envtest.Environment.CRDDirectoryPaths).
+//
+// Unlike NewInforming, no CRD informer is started; GVK-to-resource resolution
+// uses the discovery-backed REST mapper instead.
+//
+// Options are initialised with production defaults without calling
+// options.Read() (which registers flags that conflict with controller-runtime
+// imports). Ports are left unset and allocated by Start().
+func NewForConfig(ctx context.Context, cfg *rest.Config) (*Framework, error) {
+	kubeClient, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
+	}
+
+	rsmClient, err := rsmclientset.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create RSM client: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	discoClient, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create discovery client: %w", err)
+	}
+
+	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memorycache.NewMemCacheClient(discoClient))
+
+	opts := options.NewOptions(klog.Background())
+	opts.Read()
+
+	return &Framework{
+		Options:         opts,
+		RSMClient:       rsmClient,
+		kubeClient:      kubeClient,
+		dynamicClient:   dynClient,
+		discoveryClient: discoClient,
+		restMapper:      mapper,
+	}, nil
+}
+
 // AddToScheme adds types to the framework's scheme. Panics if any adder returns an error.
 func (f *Framework) AddToScheme(adder func(*runtime.Scheme)) *runtime.Scheme {
 	adder(f.scheme)
@@ -155,16 +211,14 @@ func (f *Framework) WithDiscoveryResources(resources []*metav1.APIResourceList) 
 	f.discoveryResources = resources
 }
 
-// Start starts the RSM controller with the mock clients.
+// Start starts the RSM controller with the framework's clients.
 // NOTE: This spawns a new Controller instance for each call to a newly
 // instantiated Framework. It is thus advised to review added code for
 // concurrent access, and enforced.
 func (f *Framework) Start(ctx context.Context, workers int) error {
-	switch {
-	case f.dynamicClient == nil:
+	// NewForConfig sets dynamicClient directly; NewInforming defers to WithDynamicClient.
+	if f.dynamicClient == nil {
 		panic("dynamic client is not initialized; call WithDynamicClient() to initialize it before starting the controller")
-	case len(f.scheme.AllKnownTypes()) == 0:
-		panic("scheme has no known types; call AddToScheme() to add types to the scheme before starting the controller")
 	}
 
 	// Check if controller is already running
@@ -172,42 +226,57 @@ func (f *Framework) Start(ctx context.Context, workers int) error {
 		return nil
 	}
 
-	f.Options = &options.Options{Workers: &workers}
-	f.Options.Read()
+	// Initialise Options if not set by the constructor (NewInforming path).
+	if f.Options == nil {
+		f.Options = &options.Options{Workers: &workers}
+		f.Options.Read()
+	} else {
+		f.Options.Workers = &workers
+	}
 
-	// Allocate free ports dynamically to avoid conflicts between tests
-	mainPort, err := getFreePort(ctx)
+	// Always allocate dynamic ports to avoid collisions between parallel tests.
+	mainPort, err := GetFreePort(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to allocate main port: %w", err)
 	}
 
 	f.Options.MainPort = &mainPort
 
-	selfPort, err := getFreePort(ctx)
+	selfPort, err := GetFreePort(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to allocate self port: %w", err)
 	}
 
 	f.Options.SelfPort = &selfPort
 
-	// Build discovery client from registered CRDs and any explicit resources
-	fakeKubeClient, ok := f.kubeClient.(*kubefake.Clientset)
-	if !ok {
-		return errors.New("failed to cast kube client to fake clientset")
+	// Resolve a discovery client for the controller.
+	var disco discovery.DiscoveryInterface
+
+	if f.discoveryClient != nil {
+		// Real-client path (NewForConfig): use the pre-built discovery client.
+		disco = f.discoveryClient
+	} else {
+		// Fake-client path (NewInforming): build discovery from the fake kube client.
+		fakeKubeClient, ok := f.kubeClient.(*kubefake.Clientset)
+		if !ok {
+			return errors.New("failed to cast kube client to fake clientset")
+		}
+
+		fakeDiscovery, ok := fakeKubeClient.Discovery().(*fakediscovery.FakeDiscovery)
+		if !ok {
+			return errors.New("failed to cast discovery client to fake discovery")
+		}
+
+		// Combine explicit resources with CRD-derived resources
+		allResources := f.discoveryResources
+		crdResources := f.buildDiscoveryResourcesFromCRDs()
+		allResources = append(allResources, crdResources...)
+		fakeDiscovery.Resources = allResources
+
+		disco = fakeDiscovery
 	}
 
-	fakeDiscovery, ok := fakeKubeClient.Discovery().(*fakediscovery.FakeDiscovery)
-	if !ok {
-		return errors.New("failed to cast discovery client to fake discovery")
-	}
-
-	// Combine explicit resources with CRD-derived resources
-	allResources := f.discoveryResources
-	crdResources := f.buildDiscoveryResourcesFromCRDs()
-	allResources = append(allResources, crdResources...)
-	fakeDiscovery.Resources = allResources
-
-	f.controller = internal.NewController(ctx, f.Options, f.kubeClient, f.RSMClient, f.dynamicClient, fakeDiscovery)
+	f.controller = internal.NewController(ctx, f.Options, f.kubeClient, f.RSMClient, f.dynamicClient, disco)
 
 	// Start controller in background
 	go func() {
@@ -287,6 +356,28 @@ func GoldenRulesFromYAML(_ context.Context, path string) ([]*GoldenRule, error) 
 	}
 
 	return rules, nil
+}
+
+// ValidateUnstructuredGoldenRule validates the structure of a golden rule, ensuring all required fields are present.
+func ValidateUnstructuredGoldenRule(rule *GoldenRule) error {
+
+	if rule.Name == "" {
+		return fmt.Errorf("golden rule has no name")
+	}
+
+	if rule.Description == "" {
+		return fmt.Errorf("golden rule %s has no description", rule.Name)
+	}
+
+	if len(rule.Metrics) == 0 {
+		return fmt.Errorf("golden rule %s has no metrics", rule.Name)
+	}
+
+	if rule.In == nil || rule.In.GetKind() != ResourceMetricsMonitorKind {
+		return fmt.Errorf("golden rule %s has no RMM input resource", rule.Name)
+	}
+
+	return nil
 }
 
 // ApplyCRFromYAML applies a custom resource from a YAML file.
@@ -430,23 +521,32 @@ func (f *Framework) GetIndexedCRDs() []*apiextensionsv1.CustomResourceDefinition
 	return crds
 }
 
-// GetResourcePluralNameForGVK returns the plural resource name for a given GVK by querying the CRD informer index.
+// GetResourcePluralNameForGVK returns the plural resource name for a given GVK.
+// It first queries the CRD informer index (fake-client path) and falls back to
+// the discovery-backed REST mapper (real-client path via NewForConfig).
 func (f *Framework) GetResourcePluralNameForGVK(gvk schema.GroupVersionKind) (string, error) {
-	objs, err := f.crdInformer.GetIndexer().ByIndex(gvkIndexName, gvk.String())
-	if err != nil {
-		return "", fmt.Errorf("failed to query CRD index for %s: %w", gvk.String(), err)
+	// Try CRD informer index first (populated by NewInforming + CreateCRDFromYAML).
+	if f.crdInformer != nil {
+		objs, err := f.crdInformer.GetIndexer().ByIndex(gvkIndexName, gvk.String())
+		if err == nil && len(objs) > 0 {
+			crd, ok := objs[0].(*apiextensionsv1.CustomResourceDefinition)
+			if ok {
+				return crd.Spec.Names.Plural, nil
+			}
+		}
 	}
 
-	if len(objs) == 0 {
-		return "", fmt.Errorf("no CRD found for %s", gvk.String())
+	// Fall back to REST mapper (populated by NewForConfig).
+	if f.restMapper != nil {
+		mapping, err := f.restMapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+		if err != nil {
+			return "", fmt.Errorf("REST mapper failed to resolve %s: %w", gvk, err)
+		}
+
+		return mapping.Resource.Resource, nil
 	}
 
-	crd, ok := objs[0].(*apiextensionsv1.CustomResourceDefinition)
-	if !ok {
-		return "", fmt.Errorf("unexpected type in CRD index for %s: %T", gvk.String(), objs[0])
-	}
-
-	return crd.Spec.Names.Plural, nil
+	return "", fmt.Errorf("no CRD found for %s (no CRD informer or REST mapper available)", gvk)
 }
 
 // ToUnstructured converts a runtime.Object to an unstructured.Unstructured.
@@ -475,6 +575,26 @@ func (f *Framework) FetchTelemetryMetrics(ctx context.Context) (string, error) {
 // FetchMainMetrics fetches metrics from the main server endpoint.
 func (f *Framework) FetchMainMetrics(ctx context.Context) (string, error) {
 	return f.fetchFromLocalhost(ctx, *f.Options.MainPort, "/metrics")
+}
+
+// CompareMainMetrics scrapes the main metrics endpoint and compares the result
+// against expectedMetricLines, filtering to only the metric families declared
+// in the expected text (identified by "# TYPE" lines). Returns nil on match.
+func (f *Framework) CompareMainMetrics(expectedMetricLines []string) error {
+	expectedMetrics := strings.Join(expectedMetricLines, "\n") + "\n"
+
+	var familyNames []string
+	for _, line := range strings.Split(expectedMetrics, "\n") {
+		if strings.HasPrefix(line, "# TYPE ") {
+			if parts := strings.Fields(line); len(parts) >= 3 {
+				familyNames = append(familyNames, parts[2])
+			}
+		}
+	}
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/metrics", *f.Options.MainPort)
+
+	return testutil.ScrapeAndCompare(url, strings.NewReader(expectedMetrics), familyNames...)
 }
 
 // buildDiscoveryResourcesFromCRDs builds APIResourceList entries from indexed CRDs.
@@ -713,7 +833,7 @@ func ensureSafePath(path string) string {
 }
 
 // getFreePort returns an available port by briefly binding to port 0 (which lets the OS assign a free port).
-func getFreePort(ctx context.Context) (int, error) {
+func GetFreePort(ctx context.Context) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
