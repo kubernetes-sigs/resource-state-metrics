@@ -17,7 +17,6 @@ limitations under the License.
 package framework
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -25,9 +24,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/kubernetes-sigs/resource-state-metrics/internal"
@@ -35,6 +32,7 @@ import (
 	rsmclientset "github.com/kubernetes-sigs/resource-state-metrics/pkg/generated/clientset/versioned"
 	rsmfake "github.com/kubernetes-sigs/resource-state-metrics/pkg/generated/clientset/versioned/fake"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/options"
+	"github.com/kubernetes-sigs/resource-state-metrics/tests/testutil"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	apiextensionsfake "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/fake"
@@ -175,21 +173,6 @@ func (f *Framework) Start(ctx context.Context, workers int) error {
 	f.Options = &options.Options{Workers: &workers}
 	f.Options.Read()
 
-	// Allocate free ports dynamically to avoid conflicts between tests
-	mainPort, err := getFreePort(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to allocate main port: %w", err)
-	}
-
-	f.Options.MainPort = &mainPort
-
-	selfPort, err := getFreePort(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to allocate self port: %w", err)
-	}
-
-	f.Options.SelfPort = &selfPort
-
 	// Build discovery client from registered CRDs and any explicit resources
 	fakeKubeClient, ok := f.kubeClient.(*kubefake.Clientset)
 	if !ok {
@@ -207,91 +190,37 @@ func (f *Framework) Start(ctx context.Context, workers int) error {
 	allResources = append(allResources, crdResources...)
 	fakeDiscovery.Resources = allResources
 
+	// Hold both ports until the controller starts serving on them.
+	listeners, ports, err := testutil.ListenOnFreePorts(ctx, 2)
+	if err != nil {
+		return fmt.Errorf("failed to allocate metrics ports: %w", err)
+	}
+
+	f.Options.MainPort = &ports[0]
+	f.Options.SelfPort = &ports[1]
+
 	f.controller = internal.NewController(ctx, f.Options, f.kubeClient, f.RSMClient, f.dynamicClient, fakeDiscovery)
 
 	// Start controller in background
 	go func() {
-		if err := f.controller.Run(ctx, *f.Options.Workers); err != nil {
+		if err := f.controller.RunWithListeners(ctx, *f.Options.Workers, listeners[1], listeners[0]); err != nil {
 			klog.FromContext(ctx).Error(err, "controller failed to start")
 		}
 	}()
 
-	if err := f.waitForControllerReady(ctx); err != nil {
+	// /healthz proxies to the API server, which the fake clientset cannot serve,
+	// so readiness is probed via the main metrics endpoint instead.
+	metricsURL := "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(*f.Options.MainPort)) + "/metrics"
+	if err := testutil.WaitForHTTPOK(ctx, metricsURL, 10*time.Second, ShortTimeInterval); err != nil {
 		return fmt.Errorf("controller failed to become ready: %w", err)
 	}
 
 	return nil
 }
 
-// GetGoldenRuleFiles returns all golden rule file paths for the specified resolver types.
-func GetGoldenRuleFiles(resolverType []v1alpha1.ResolverType) []string {
-	var files []string //nolint:prealloc
-
-	for _, resolverType := range resolverType {
-		goldenDir := filepath.Join("golden", string(resolverType))
-		if _, err := os.Stat(goldenDir); os.IsNotExist(err) {
-			panic(fmt.Sprintf("golden rules directory does not exist for resolver type %s: expected at %s", resolverType, goldenDir))
-		}
-
-		matches, _ := filepath.Glob(filepath.Join(goldenDir, "*.yaml"))
-		files = append(files, matches...)
-	}
-
-	return files
-}
-
-// GoldenRule defines the structure of a golden rule for testing metric generation.
-// Every field is required; no omitempty allowed, to ensure the test is fully specified.
-type GoldenRule struct {
-	Name        string                                 `yaml:"name"`
-	Description string                                 `yaml:"description"`
-	In          *unstructured.Unstructured             `yaml:"in"` // In is resource-agnostic to accommodate for any future resources introduced in RSM.
-	Metrics     []string                               `yaml:"metrics"`
-	Status      *v1alpha1.ResourceMetricsMonitorStatus `yaml:"status"`
-}
-
-// GoldenRulesFromYAML loads all golden rules from a (possibly multi-document) YAML file.
-// Documents are separated by "---" lines; each document must have a non-empty name field.
-func GoldenRulesFromYAML(_ context.Context, path string) ([]*GoldenRule, error) {
-	data, err := os.ReadFile(ensureSafePath(path))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read YAML file %s: %w", path, err)
-	}
-
-	// Normalise Windows line endings, then split on YAML document separators.
-	data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
-	docs := bytes.Split(data, []byte("\n---\n"))
-
-	var rules []*GoldenRule
-
-	for _, doc := range docs {
-		// The very first document may start with "---"; strip it.
-		doc = bytes.TrimPrefix(bytes.TrimSpace(doc), []byte("---"))
-		doc = bytes.TrimSpace(doc)
-
-		if len(doc) == 0 {
-			continue
-		}
-
-		goldenRule := &GoldenRule{}
-		if err := yaml.Unmarshal(doc, goldenRule); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal YAML document in %s: %w", path, err)
-		}
-
-		// Skip documents that are all comments or whitespace (name will be empty).
-		if goldenRule.Name == "" {
-			continue
-		}
-
-		rules = append(rules, goldenRule)
-	}
-
-	return rules, nil
-}
-
 // ApplyCRFromYAML applies a custom resource from a YAML file.
 func (f *Framework) ApplyCRFromYAML(ctx context.Context, path string) (*unstructured.Unstructured, error) {
-	data, err := os.ReadFile(ensureSafePath(path))
+	data, err := os.ReadFile(testutil.EnsureSafePath(path))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read YAML file %s: %w", path, err)
 	}
@@ -395,7 +324,7 @@ func (f *Framework) DeleteCR(ctx context.Context, gvr schema.GroupVersionResourc
 
 // CreateCRDFromYAML creates a CRD from a YAML file and waits for it to be indexed.
 func (f *Framework) CreateCRDFromYAML(ctx context.Context, path string) (*apiextensionsv1.CustomResourceDefinition, error) {
-	data, err := os.ReadFile(ensureSafePath(path))
+	data, err := os.ReadFile(testutil.EnsureSafePath(path))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read YAML file %s: %w", path, err)
 	}
@@ -477,6 +406,14 @@ func (f *Framework) FetchMainMetrics(ctx context.Context) (string, error) {
 	return f.fetchFromLocalhost(ctx, *f.Options.MainPort, "/metrics")
 }
 
+// CompareMainMetrics scrapes the main metrics endpoint and compares it against
+// the expected metric families.
+func (f *Framework) CompareMainMetrics(expectedMetricLines []string) error {
+	url := fmt.Sprintf("http://127.0.0.1:%d/metrics", *f.Options.MainPort)
+
+	return testutil.CompareMetrics(url, expectedMetricLines)
+}
+
 // buildDiscoveryResourcesFromCRDs builds APIResourceList entries from indexed CRDs.
 // This allows wildcard expansion to work with CRDs registered in the framework.
 func (f *Framework) buildDiscoveryResourcesFromCRDs() []*metav1.APIResourceList {
@@ -513,35 +450,6 @@ func (f *Framework) buildDiscoveryResourcesFromCRDs() []*metav1.APIResourceList 
 	}
 
 	return result
-}
-
-// waitForControllerReady waits for the controller to be ready.
-func (f *Framework) waitForControllerReady(ctx context.Context) error {
-	timeout := time.After(10 * time.Second)
-
-	ticker := time.NewTicker(ShortTimeInterval)
-	defer ticker.Stop()
-
-	for {
-		port := *f.Options.MainPort
-
-		select {
-		case <-timeout:
-			return fmt.Errorf("timed out waiting for controller main server port %d to open", port)
-		case <-ticker.C:
-			dialer := net.Dialer{
-				Timeout: ShortTimeInterval,
-			}
-			addr := fmt.Sprintf("127.0.0.1:%d", port)
-
-			conn, err := dialer.DialContext(ctx, "tcp", addr)
-			if err == nil {
-				_ = conn.Close()
-
-				return nil
-			}
-		}
-	}
 }
 
 // waitForCRDIndexed waits for a CRD to appear in the informer index.
@@ -591,7 +499,7 @@ func (f *Framework) fetchFromLocalhost(ctx context.Context, port int, path strin
 		},
 	}
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // URL is constructed from localhost only
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch %s: %w", path, err)
 	}
@@ -689,47 +597,4 @@ func (b *CRBuilder) WithAnnotation(key, value string) *CRBuilder {
 // Build returns the constructed unstructured CR.
 func (b *CRBuilder) Build() *unstructured.Unstructured {
 	return b.cr
-}
-
-// ensureSafePath checks if the provided path is within the tests directory to prevent file system access outside of the intended scope.
-func ensureSafePath(path string) string {
-	cleanedPath := filepath.Clean(path)
-
-	absolutePath, err := filepath.Abs(cleanedPath)
-	if err != nil {
-		panic(fmt.Sprintf("Failed to get absolute path: %v", err))
-	}
-
-	testsDir, err := filepath.Abs("..")
-	if err != nil {
-		panic(fmt.Sprintf("Failed to get absolute path of tests directory: %v", err))
-	}
-
-	if !strings.HasPrefix(absolutePath, testsDir) {
-		panic(fmt.Sprintf("Unsafe path detected: %s is outside of the tests directory", absolutePath))
-	}
-
-	return absolutePath
-}
-
-// getFreePort returns an available port by briefly binding to port 0 (which lets the OS assign a free port).
-func getFreePort(ctx context.Context) (int, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	var lc net.ListenConfig
-
-	listener, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, fmt.Errorf("failed to listen on free port: %w", err)
-	}
-
-	defer listener.Close()
-
-	addr, ok := listener.Addr().(*net.TCPAddr)
-	if !ok {
-		return 0, errors.New("unexpected address type")
-	}
-
-	return addr.Port, nil
 }

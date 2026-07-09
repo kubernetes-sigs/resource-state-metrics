@@ -22,7 +22,7 @@ It verifies that:
 * Metrics are updated when resources are added/removed
 */
 
-package tests
+package fake
 
 import (
 	"context"
@@ -31,7 +31,7 @@ import (
 	"time"
 
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
-	"github.com/kubernetes-sigs/resource-state-metrics/tests/framework"
+	"github.com/kubernetes-sigs/resource-state-metrics/tests/fake/framework"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"

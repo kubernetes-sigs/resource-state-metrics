@@ -22,13 +22,10 @@ import (
 	"time"
 
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
+	"github.com/kubernetes-sigs/resource-state-metrics/tests/testutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/uuid"
-)
-
-const (
-	ResourceMetricsMonitorKind = "ResourceMetricsMonitor"
 )
 
 // LoadRMMsFromGoldenRules extracts all RMMs from golden rule files.
@@ -37,14 +34,14 @@ const (
 func LoadRMMsFromGoldenRules(ctx context.Context) ([]runtime.Object, error) {
 	var rmms []runtime.Object
 
-	files := GetGoldenRuleFiles([]v1alpha1.ResolverType{
+	files := testutil.GetGoldenRuleFiles("../golden", []v1alpha1.ResolverType{
 		v1alpha1.ResolverTypeUnstructured,
 		v1alpha1.ResolverTypeCEL,
 		v1alpha1.ResolverTypeStarlark,
 	})
 
 	for _, file := range files {
-		goldenRules, err := GoldenRulesFromYAML(ctx, file)
+		goldenRules, err := testutil.GoldenRulesFromYAML(ctx, file)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load golden rules from %s: %w", file, err)
 		}
@@ -54,7 +51,7 @@ func LoadRMMsFromGoldenRules(ctx context.Context) ([]runtime.Object, error) {
 				return nil, fmt.Errorf("golden rule %q in %s has no input resource defined", goldenRule.Name, file)
 			}
 
-			if goldenRule.In.GetKind() != ResourceMetricsMonitorKind {
+			if goldenRule.In.GetKind() != testutil.ResourceMetricsMonitorKind {
 				return nil, fmt.Errorf("golden rule %q in %s input resource is not a ResourceMetricsMonitor", goldenRule.Name, file)
 			}
 

@@ -190,7 +190,7 @@ Which packages will gain or change unit coverage? Run with `make test_unit`.
 <!--
 resource-state-metrics compares generated output against checked-in golden
 fixtures under `tests/golden/`. Describe the fixtures you will add or update and
-confirm `make compare_metrics` passes.
+confirm `make test_e2e_fake` and `make test_e2e_envtest` pass.
 -->
 
 #### e2e tests
