@@ -144,9 +144,10 @@ func NewInforming(ctx context.Context, initialObjects ...runtime.Object) *Framew
 // Unlike NewInforming, no CRD informer is started; GVK-to-resource resolution
 // uses the discovery-backed REST mapper instead.
 //
-// Options are initialised with production defaults without calling
-// options.Read() (which registers flags that conflict with controller-runtime
-// imports). Ports are left unset and allocated by Start().
+// Options are initialised with production defaults via options.Read().
+// The stringFlag helper in options.Read() prevents flag-redefinition panics
+// when controller-runtime has already registered kubeconfig/master flags.
+// Ports are left unset and allocated by Start().
 func NewForConfig(ctx context.Context, cfg *rest.Config) (*Framework, error) {
 	kubeClient, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
