@@ -164,6 +164,11 @@ func (o *Options) Read() {
 				}
 			}
 		})
+
+		// Sync pre-registered flags to pick up parsed/overridden values
+		// (see stringFlag for why this is needed).
+		stringFlagSync(&registeredKubeconfig, kubeconfigFlagName)
+		stringFlagSync(&registeredMasterURL, masterURLFlagName)
 	})
 
 	// Copy registered values to this Options instance
@@ -229,9 +234,13 @@ func validateFlag(name, value string) error {
 }
 
 // stringFlag registers a string flag if it does not already exist on the
-// default flag set, otherwise it returns a pointer to the existing flag's
-// default value. This prevents "flag redefined" panics when another package
+// default flag set, otherwise it returns a pointer to its default value as a
+// placeholder. This prevents "flag redefined" panics when another package
 // (e.g. controller-runtime via envtest) registers the same flag name in an init().
+//
+// For pre-existing flags the returned pointer is a snapshot of the default.
+// Call stringFlagSync after flag.Parse() and env-var overrides to update
+// the pointer to the final resolved value.
 //
 // The alternative is to use a custom build tag which has
 // some disadvantages as the IDE must be aware of the build tag and the test must be run with the build tag.
@@ -242,4 +251,14 @@ func stringFlag(name, value, usage string) *string {
 	}
 
 	return flag.String(name, value, usage)
+}
+
+// stringFlagSync updates ptr to reflect the current value of the named flag.
+// Called after flag.Parse() and env-var overrides to pick up changes for
+// flags that were pre-registered by another package (see stringFlag).
+func stringFlagSync(ptr **string, name string) {
+	if f := flag.Lookup(name); f != nil {
+		v := f.Value.String()
+		*ptr = &v
+	}
 }
