@@ -162,9 +162,12 @@ func TestCompareMetrics(t *testing.T) {
 
 		t.Run(testName, func(t *testing.T) {
 			// Cardinality cutoff golden rules (ThresholdsExceeded=true) are skipped
-			// because the cardinality status update goroutine races with store
-			// initialization when using real watch events. These edge cases are
-			// already validated by TestGoldenRules with fake clients.
+			// because real API servers emit Watch events after the initial List,
+			// which trigger Update → Add → buildMetricString with cutoff=true,
+			// overwriting previously-stored metrics with empty strings. Fake clients
+			// never re-emit those events, so the stored metrics survive the cutoff.
+			// Fixing this requires a controller change; these edge cases are already
+			// validated by TestGoldenRules with fake clients.
 			if e.rule.Status != nil && e.rule.Status.Cardinality != nil && e.rule.Status.Cardinality.ThresholdsExceeded {
 				t.Skipf("Skipping cardinality cutoff golden rule (validated by TestGoldenRules)")
 			}
