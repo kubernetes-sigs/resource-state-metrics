@@ -59,6 +59,7 @@ YAMLFMT_VERSION ?= v0.16.0
 YAML_FILES = $(shell find . -type d -name vendor -prune -o -type d -name $(patsubst %/,%,$(patsubst ./%,%,$(ASSETS_DIR))) -prune -o \( -name "*.yaml" -o -name "*.yml" \) -print | grep -v "^./vendor" | grep -v "^./$(ASSETS_DIR)")
 YQ ?= $(GOBIN)/yq
 YQ_VERSION ?= v4.52.4
+SETUP_ENVTEST_VERSION ?= release-0.23
 
 BRANCH = $(shell git rev-parse --abbrev-ref HEAD)
 BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
@@ -97,6 +98,8 @@ setup:
 	@$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	# Setup controller-gen.
 	@$(GO) install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
+	# Setup setup-envtest.
+	@$(GO) install sigs.k8s.io/controller-runtime/tools/setup-envtest@$(SETUP_ENVTEST_VERSION)
 	# Setup code-generator.
 	@$(GO) install k8s.io/code-generator/cmd/...@$(CODE_GENERATOR_VERSION)
 	# Setup checkmake.
@@ -107,8 +110,6 @@ setup:
 	@$(GO) install github.com/brancz/gojsontoyaml@$(GOJSONTOYAML_VERSION)
 	# Setup yamlfmt.
 	@$(GO) install github.com/google/yamlfmt/cmd/yamlfmt@$(YAMLFMT_VERSION)
-	# Setup setup-envtest.
-	@$(GO) install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.1
 	# Setup pre-commit hooks.
 	@$(PIPX) install pre-commit >/dev/null || \
 		(printf "pipx is required to install pre-commit. Please install pipx, or an alternate pip package, for e.g., pip3, and run 'make setup' (with PIPX in the latter case, where pipx is not used) again.\n" && exit 1)
