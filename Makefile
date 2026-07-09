@@ -47,6 +47,7 @@ PPROF_OPTIONS ?=
 PPROF_PORT ?= 9998
 PROJECT_NAME = resource-state-metrics
 REGISTRY ?= us-central1-docker.pkg.dev/k8s-staging-images/resource-state-metrics
+SETUP_ENVTEST ?= $(GOBIN)/setup-envtest
 TAG ?= $(BUILD_TAG)
 V ?= 4
 VALE ?= vale
@@ -106,6 +107,8 @@ setup:
 	@$(GO) install github.com/brancz/gojsontoyaml@$(GOJSONTOYAML_VERSION)
 	# Setup yamlfmt.
 	@$(GO) install github.com/google/yamlfmt/cmd/yamlfmt@$(YAMLFMT_VERSION)
+	# Setup setup-envtest.
+	@$(GO) install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.1
 	# Setup pre-commit hooks.
 	@$(PIPX) install pre-commit >/dev/null || \
 		(printf "pipx is required to install pre-commit. Please install pipx, or an alternate pip package, for e.g., pip3, and run 'make setup' (with PIPX in the latter case, where pipx is not used) again.\n" && exit 1)
@@ -224,34 +227,22 @@ test_unit:
 
 .PHONY: test_e2e
 test_e2e:
-	@$(GO) test -v -race ./tests/...
+	@$(GO) test -count=1 -v -race ./tests/...
+
+# ENVTEST_K8S_VERSION is set to the version of k8s.io/api in go.mod
+# convert e.g. v0.32.3 to 1.32
+ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'.' '{printf "1.%d.x", $$2}')
+
+# TODO: bavarianbidi
+# install the kube-apiserver and etcd-binary to the LOCALBIN folder
+# this requires the "lazytool" implementation of https://github.com/kubernetes-sigs/resource-state-metrics/issues/37
+.PHONY: test_compare_metrics
+test_compare_metrics:
+	@KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(GOBIN) -p path)" \
+	$(GO) test -race -v -count=1 -timeout 120s ./tests/ -run TestCompareMetrics
 
 .PHONY: test
-test: test_unit test_e2e
-
-.PHONY: apply_testdata
-apply_testdata: delete_testdata
-	# Applying testdata
-	@$(KUBECTL) apply -R -f tests/manifests/custom-resource-definition
-	@$(KUBECTL) apply -R -f tests/manifests/custom-resource
-	@$(YQ) '.in' $(GOLDEN_FILES) | $(KUBECTL) apply -f -
-	# Applied testdata
-
-.PHONY: delete_testdata
-delete_testdata:
-	# Deleting testdata
-	-@$(KUBECTL) delete --ignore-not-found -R -f tests/manifests
-	# Deleted testdata
-
-.PHONY: golden_metrics
-golden_metrics: $(GOLDEN_FILES)
-	@$(YQ) --no-doc '.out.metrics[]' $(GOLDEN_FILES) > $(GOLDEN_METRICS_FILE)
-
-.PHONY: compare_metrics
-compare_metrics: golden_metrics
-	@diff \
-		<(sort $(GOLDEN_METRICS_FILE)) \
-		<(curl -sf http://localhost:$(MAIN_METRICS_PORT)/metrics | grep -Ff $(GOLDEN_METRICS_FILE) | sort)
+test: test_unit test_e2e test_compare_metrics
 
 ###########
 # Linting #
