@@ -247,6 +247,7 @@ func validateFlag(name, value string) error {
 func stringFlag(name, value, usage string) *string {
 	if f := flag.Lookup(name); f != nil {
 		v := f.DefValue
+
 		return &v
 	}
 
