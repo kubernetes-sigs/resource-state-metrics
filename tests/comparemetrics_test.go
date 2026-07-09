@@ -42,7 +42,11 @@ import (
 //
 //	KUBEBUILDER_ASSETS=<path>    – starts a local kube-apiserver + etcd  (make test_compare_metrics)
 //	USE_EXISTING_CLUSTER=true    – connects to the current KUBECONFIG    (make test_compare_metrics_kind)
+//
+//nolint:gocognit,cyclop
 func TestCompareMetrics(t *testing.T) {
+	t.Parallel()
+
 	useExisting := os.Getenv("USE_EXISTING_CLUSTER") == "true"
 
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" && !useExisting {
@@ -69,16 +73,16 @@ func TestCompareMetrics(t *testing.T) {
 		t.Fatalf("Failed to start envtest: %v", err)
 	}
 
-	defer func() {
+	t.Cleanup(func() {
 		cancel()
 
 		if stopErr := testEnv.Stop(); stopErr != nil {
 			t.Errorf("Failed to stop envtest: %v", stopErr)
 		}
-	}()
+	})
 
 	// Build the framework from the envtest rest.Config.
-	f, err := framework.NewForConfig(ctx, cfg)
+	f, err := framework.NewForConfig(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create framework: %v", err)
 	}
@@ -161,6 +165,8 @@ func TestCompareMetrics(t *testing.T) {
 		testName := strings.TrimSuffix(filepath.Base(e.file), ".yaml")
 
 		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
 			// Cardinality cutoff golden rules (ThresholdsExceeded=true) are skipped
 			// because real API servers emit Watch events after the initial List,
 			// which trigger Update → Add → buildMetricString with cutoff=true,
@@ -175,7 +181,7 @@ func TestCompareMetrics(t *testing.T) {
 			envtestPollCompareMetrics(t, f, e.rule.Metrics)
 
 			if e.rule.Status != nil {
-				envtestPollStatus(t, ctx, f, e.rule, statusCmpOpts)
+				envtestPollStatus(ctx, t, f, e.rule, statusCmpOpts)
 			}
 		})
 	}
@@ -187,6 +193,7 @@ func envtestPollCompareMetrics(t *testing.T, f *framework.Framework, expectedMet
 	t.Helper()
 
 	deadline := time.After(15 * time.Second)
+
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -210,10 +217,11 @@ func envtestPollCompareMetrics(t *testing.T, f *framework.Framework, expectedMet
 // envtestPollStatus polls until the RMM status matches the expected golden output.
 // Cardinality status is updated asynchronously by a background goroutine after
 // the Processed condition is set.
-func envtestPollStatus(t *testing.T, ctx context.Context, f *framework.Framework, rule *framework.GoldenRule, opts cmp.Options) {
+func envtestPollStatus(ctx context.Context, t *testing.T, f *framework.Framework, rule *framework.GoldenRule, opts cmp.Options) {
 	t.Helper()
 
 	deadline := time.After(15 * time.Second)
+
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 

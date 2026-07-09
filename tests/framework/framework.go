@@ -32,10 +32,10 @@ import (
 
 	"github.com/kubernetes-sigs/resource-state-metrics/internal"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 	rsmclientset "github.com/kubernetes-sigs/resource-state-metrics/pkg/generated/clientset/versioned"
 	rsmfake "github.com/kubernetes-sigs/resource-state-metrics/pkg/generated/clientset/versioned/fake"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/options"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	apiextensionsfake "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/fake"
@@ -148,7 +148,7 @@ func NewInforming(ctx context.Context, initialObjects ...runtime.Object) *Framew
 // The stringFlag helper in options.Read() prevents flag-redefinition panics
 // when controller-runtime has already registered kubeconfig/master flags.
 // Ports are left unset and allocated by Start().
-func NewForConfig(ctx context.Context, cfg *rest.Config) (*Framework, error) {
+func NewForConfig(cfg *rest.Config) (*Framework, error) {
 	kubeClient, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
@@ -361,9 +361,8 @@ func GoldenRulesFromYAML(_ context.Context, path string) ([]*GoldenRule, error) 
 
 // ValidateUnstructuredGoldenRule validates the structure of a golden rule, ensuring all required fields are present.
 func ValidateUnstructuredGoldenRule(rule *GoldenRule) error {
-
 	if rule.Name == "" {
-		return fmt.Errorf("golden rule has no name")
+		return errors.New("golden rule has no name")
 	}
 
 	if rule.Description == "" {
@@ -585,6 +584,7 @@ func (f *Framework) CompareMainMetrics(expectedMetricLines []string) error {
 	expectedMetrics := strings.Join(expectedMetricLines, "\n") + "\n"
 
 	var familyNames []string
+
 	for _, line := range strings.Split(expectedMetrics, "\n") {
 		if strings.HasPrefix(line, "# TYPE ") {
 			if parts := strings.Fields(line); len(parts) >= 3 {
