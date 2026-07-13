@@ -55,8 +55,6 @@ VALE_VERSION ?= 3.1.0
 YAMLFMT ?= $(GOBIN)/yamlfmt
 YAMLFMT_VERSION ?= v0.16.0
 YAML_FILES = $(shell find . -type d -name vendor -prune -o -type d -name $(patsubst %/,%,$(patsubst ./%,%,$(ASSETS_DIR))) -prune -o \( -name "*.yaml" -o -name "*.yml" \) -print | grep -v "^./vendor" | grep -v "^./$(ASSETS_DIR)")
-YQ ?= $(GOBIN)/yq
-YQ_VERSION ?= v4.52.4
 
 ##@ Dependencies
 
@@ -67,9 +65,11 @@ $(LOCALBIN):
 
 ## Tool Binaries
 CHECKMAKE ?= $(LOCALBIN)/checkmake
+YQ ?= $(LOCALBIN)/yq
 
 ## Tool Versions
 CHECKMAKE_VERSION ?= v0.3.2
+YQ_VERSION ?= v4.52.4
 
 
 
@@ -103,8 +103,6 @@ setup:
     rm vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz && \
     chmod +x $(ASSETS_DIR)/$(VALE); \
 	fi
-	# Setup yq.
-	@$(GO) install github.com/mikefarah/yq/v4@$(YQ_VERSION)
 	# Setup markdownfmt.
 	@$(GO) install github.com/Kunde21/markdownfmt/v3/cmd/markdownfmt@$(MARKDOWNFMT_VERSION)
 	# Setup golangci-lint.
@@ -136,6 +134,11 @@ setup:
 checkmake: $(CHECKMAKE) ## Download checkmake locally if necessary.
 $(CHECKMAKE): $(LOCALBIN)
 	$(call go-install-tool,$(CHECKMAKE),github.com/checkmake/checkmake/cmd/checkmake,$(CHECKMAKE_VERSION))
+
+.PHONY: yq
+yq: $(YQ) ## Download yq locally if necessary.
+$(YQ): $(LOCALBIN)
+	$(call go-install-tool,$(YQ),github.com/mikefarah/yq/v4,$(YQ_VERSION))
 
 ##############
 # Generating #
@@ -248,7 +251,7 @@ test_e2e:
 test: test_unit test_e2e
 
 .PHONY: apply_testdata
-apply_testdata: delete_testdata
+apply_testdata: $(YQ) delete_testdata
 	# Applying testdata
 	@$(KUBECTL) apply -R -f tests/manifests/custom-resource-definition
 	@$(KUBECTL) apply -R -f tests/manifests/custom-resource
@@ -262,7 +265,7 @@ delete_testdata:
 	# Deleted testdata
 
 .PHONY: golden_metrics
-golden_metrics: $(GOLDEN_FILES)
+golden_metrics: $(YQ) $(GOLDEN_FILES)
 	@$(YQ) --no-doc '.out.metrics[]' $(GOLDEN_FILES) > $(GOLDEN_METRICS_FILE)
 
 .PHONY: compare_metrics
