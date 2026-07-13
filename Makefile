@@ -22,9 +22,7 @@ CONTROLLER_GEN_OUT_DIR ?= /tmp/resource-state-metrics/controller-gen
 CONTROLLER_GEN_VERSION ?= v0.16.5
 CREATED_AT_EPOCH ?=
 GO ?= go
-GOLANGCI_LINT ?= $(GOBIN)/golangci-lint
 GOLANGCI_LINT_CONFIG ?= .golangci.yaml
-GOLANGCI_LINT_VERSION ?= v2.10.1
 GOLDEN_FILES = $(shell find tests/golden -type f -name "*.yaml")
 GOLDEN_METRICS_FILE ?= tests/golden/metrics.txt
 GO_FILES = $(shell find . -type d -name vendor -prune -o -type f -name "*.go" -print)
@@ -62,6 +60,7 @@ JSONNETFMT ?= $(LOCALBIN)/jsonnetfmt
 GOJSONTOYAML ?= $(LOCALBIN)/gojsontoyaml
 MARKDOWNFMT ?= $(LOCALBIN)/markdownfmt
 YAMLFMT ?= $(LOCALBIN)/yamlfmt
+GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
 
 ## Tool Versions
 CHECKMAKE_VERSION ?= v0.3.2
@@ -71,6 +70,7 @@ JSONNETFMT_VERSION ?= v0.21.0
 GOJSONTOYAML_VERSION ?= v0.1.0
 MARKDOWNFMT_VERSION ?= v3.1.0
 YAMLFMT_VERSION ?= v0.16.0
+GOLANGCI_LINT_VERSION ?= v2.10.1
 
 
 
@@ -103,8 +103,6 @@ setup:
     rm vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz && \
     chmod +x $(ASSETS_DIR)/$(VALE); \
 	fi
-	# Setup golangci-lint.
-	@$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	# Setup controller-gen.
 	@$(GO) install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
 	# Setup code-generator.
@@ -156,6 +154,11 @@ $(MARKDOWNFMT): $(LOCALBIN)
 yamlfmt: $(YAMLFMT) ## Download yamlfmt locally if necessary.
 $(YAMLFMT): $(LOCALBIN)
 	$(call go-install-tool,$(YAMLFMT),github.com/google/yamlfmt/cmd/yamlfmt,$(YAMLFMT_VERSION))
+
+.PHONY: golangci-lint
+golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
+$(GOLANGCI_LINT): $(LOCALBIN)
+	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
 ##############
 # Generating #
@@ -354,17 +357,13 @@ licensecheck_go: $(GO_FILES)
 licensecheck_go_fix: $(GO_FILES)
 	@./hack/fix-license-headers.sh $(GO_FILES)
 
-golangci_lint: $(GO_FILES)
+.PHONY: lint_go
+lint_go: licensecheck_go $(GOLANGCI_LINT)
 	@$(GOLANGCI_LINT) run -c $(GOLANGCI_LINT_CONFIG)
 
-golangci_lint_fix: $(GO_FILES)
-	@$(GOLANGCI_LINT) run --fix -c $(GOLANGCI_LINT_CONFIG)
-
-.PHONY: lint_go
-lint_go: licensecheck_go golangci_lint
-
 .PHONY: lint_go_fix
-lint_go_fix: licensecheck_go_fix golangci_lint_fix
+lint_go_fix: licensecheck_go_fix $(GOLANGCI_LINT)
+	@$(GOLANGCI_LINT) run --fix -c $(GOLANGCI_LINT_CONFIG)
 
 ####################
 # Linting: Jsonnet #
