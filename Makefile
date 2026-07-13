@@ -68,6 +68,7 @@ YQ ?= $(LOCALBIN)/yq
 JSONNET ?= $(LOCALBIN)/jsonnet
 JSONNETFMT ?= $(LOCALBIN)/jsonnetfmt
 GOJSONTOYAML ?= $(LOCALBIN)/gojsontoyaml
+MARKDOWNFMT ?= $(LOCALBIN)/markdownfmt
 
 ## Tool Versions
 CHECKMAKE_VERSION ?= v0.3.2
@@ -75,7 +76,7 @@ YQ_VERSION ?= v4.52.4
 JSONNET_VERSION ?= v0.21.0
 JSONNETFMT_VERSION ?= v0.21.0
 GOJSONTOYAML_VERSION ?= v0.1.0
-
+MARKDOWNFMT_VERSION ?= v3.1.0
 
 
 
@@ -157,6 +158,11 @@ $(JSONNETFMT): $(LOCALBIN)
 gojsontoyaml: $(GOJSONTOYAML) ## Download gojsontoyaml locally if necessary.
 $(GOJSONTOYAML): $(LOCALBIN)
 	$(call go-install-tool,$(GOJSONTOYAML),github.com/brancz/gojsontoyaml,$(GOJSONTOYAML_VERSION))
+
+.PHONY: markdownfmt
+markdownfmt: $(MARKDOWNFMT) ## Download markdownfmt locally if necessary.
+$(MARKDOWNFMT): $(LOCALBIN)
+	$(call go-install-tool,$(MARKDOWNFMT),github.com/Kunde21/markdownfmt/v3/cmd/markdownfmt,$(MARKDOWNFMT_VERSION))
 
 ##############
 # Generating #
@@ -341,11 +347,12 @@ vale: .vale.ini $(MD_FILES)
 	$(ASSETS_DIR)/$(VALE) sync && \
 	$(ASSETS_DIR)/$(VALE) $(MD_FILES)
 
-markdownfmt: $(MD_FILES)
+.PHONY: markdown_format
+markdown_format: $(MARKDOWNFMT) $(MD_FILES)
 	@test -z "$(shell $(MARKDOWNFMT) -l $(MD_FILES))" || (echo "The following files need to be formatted with 'markdownfmt -w -gofmt':" $(shell $(MARKDOWNFMT) -l $(MD_FILES)) "" && exit 1)
 
-markdownfmt_fix: $(MD_FILES)
-	@for file in $(MD_FILES); do markdownfmt -w -gofmt $$file || exit 1; done
+markdown_format_fix: $(MD_FILES)
+	@for file in $(MD_FILES); do $(MARKDOWNFMT) -w -gofmt $$file || exit 1; done
 
 proposals_toc: $(PROPOSAL_FILES)
 	@$(MDTOC) --inplace --max-depth=5 $(PROPOSAL_FILES)
@@ -355,10 +362,11 @@ proposals_toc_check: $(PROPOSAL_FILES)
 		(echo "Proposal tables of contents are out of date. Run 'make proposals_toc' to fix." && exit 1)
 
 .PHONY: lint_md
-lint_md: vale markdownfmt proposals_toc_check
+lint_md: vale markdown_format proposals_toc_check
 
 .PHONY: lint_md_fix
-lint_md_fix: vale markdownfmt_fix proposals_toc
+lint_md_fix: vale markdown_format_fix proposals_toc
+	@for file in $(MD_FILES); do $(MARKDOWNFMT) -w -gofmt $$file || exit 1; done
 
 ###############
 # Linting: Go #
