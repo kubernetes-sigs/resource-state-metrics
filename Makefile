@@ -45,8 +45,6 @@ VALE ?= vale
 VALE_ARCH ?= $(if $(filter $(shell uname -m),arm64),macOS_arm64,Linux_64-bit)
 VALE_STYLES_DIR ?= /tmp/.vale/styles
 VALE_VERSION ?= 3.1.0
-YAMLFMT ?= $(GOBIN)/yamlfmt
-YAMLFMT_VERSION ?= v0.16.0
 YAML_FILES = $(shell find . -type d -name vendor -prune -o -type d -name $(patsubst %/,%,$(patsubst ./%,%,$(ASSETS_DIR))) -prune -o \( -name "*.yaml" -o -name "*.yml" \) -print | grep -v "^./vendor" | grep -v "^./$(ASSETS_DIR)")
 
 ##@ Dependencies
@@ -63,6 +61,7 @@ JSONNET ?= $(LOCALBIN)/jsonnet
 JSONNETFMT ?= $(LOCALBIN)/jsonnetfmt
 GOJSONTOYAML ?= $(LOCALBIN)/gojsontoyaml
 MARKDOWNFMT ?= $(LOCALBIN)/markdownfmt
+YAMLFMT ?= $(LOCALBIN)/yamlfmt
 
 ## Tool Versions
 CHECKMAKE_VERSION ?= v0.3.2
@@ -71,6 +70,7 @@ JSONNET_VERSION ?= v0.21.0
 JSONNETFMT_VERSION ?= v0.21.0
 GOJSONTOYAML_VERSION ?= v0.1.0
 MARKDOWNFMT_VERSION ?= v3.1.0
+YAMLFMT_VERSION ?= v0.16.0
 
 
 
@@ -109,8 +109,6 @@ setup:
 	@$(GO) install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
 	# Setup code-generator.
 	@$(GO) install k8s.io/code-generator/cmd/...@$(CODE_GENERATOR_VERSION)
-	# Setup yamlfmt.
-	@$(GO) install github.com/google/yamlfmt/cmd/yamlfmt@$(YAMLFMT_VERSION)
 	# Setup pre-commit hooks.
 	@$(PIPX) install pre-commit >/dev/null || \
 		(printf "pipx is required to install pre-commit. Please install pipx, or an alternate pip package, for e.g., pip3, and run 'make setup' (with PIPX in the latter case, where pipx is not used) again.\n" && exit 1)
@@ -153,6 +151,11 @@ $(GOJSONTOYAML): $(LOCALBIN)
 markdownfmt: $(MARKDOWNFMT) ## Download markdownfmt locally if necessary.
 $(MARKDOWNFMT): $(LOCALBIN)
 	$(call go-install-tool,$(MARKDOWNFMT),github.com/Kunde21/markdownfmt/v3/cmd/markdownfmt,$(MARKDOWNFMT_VERSION))
+
+.PHONY: yamlfmt
+yamlfmt: $(YAMLFMT) ## Download yamlfmt locally if necessary.
+$(YAMLFMT): $(LOCALBIN)
+	$(call go-install-tool,$(YAMLFMT),github.com/google/yamlfmt/cmd/yamlfmt,$(YAMLFMT_VERSION))
 
 ##############
 # Generating #
@@ -316,17 +319,13 @@ licensecheck_yaml: $(YAML_FILES)
 licensecheck_yaml_fix: $(YAML_FILES)
 	@./hack/fix-license-headers.sh $(YAML_FILES)
 
-yamlfmt: $(YAML_FILES)
+.PHONY: lint_yaml
+lint_yaml: licensecheck_yaml $(YAMLFMT)
 	@$(YAMLFMT) -dry -quiet . || (echo "YAML files need formatting. Run 'make yamlfmt_fix' to fix." && exit 1)
 
-yamlfmt_fix: $(YAML_FILES)
-	@$(YAMLFMT) .
-
-.PHONY: lint_yaml
-lint_yaml: licensecheck_yaml yamlfmt
-
 .PHONY: lint_yaml_fix
-lint_yaml_fix: licensecheck_yaml_fix yamlfmt_fix
+lint_yaml_fix: licensecheck_yaml_fix $(YAMLFMT)
+	@$(YAMLFMT) .
 
 #####################
 # Linting: Markdown #
