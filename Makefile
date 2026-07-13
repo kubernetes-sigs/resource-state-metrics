@@ -33,8 +33,6 @@ JSONNET_MANIFESTS_DIR ?= jsonnet/manifests
 KUBECTL ?= kubectl
 LOCAL_NAMESPACE ?= default
 MAIN_METRICS_PORT ?= 9999
-MARKDOWNFMT ?= $(GOBIN)/markdownfmt
-MARKDOWNFMT_VERSION ?= v3.1.0
 MD_FILES = $(shell find . \( -type d -name 'vendor' -o -type d -name $(patsubst %/,%,$(patsubst ./%,%,$(ASSETS_DIR))) \) -prune -o -type f -name "*.md" -print)
 PIPX ?= pipx
 PPROF_OPTIONS ?=
@@ -64,6 +62,7 @@ YQ ?= $(LOCALBIN)/yq
 JSONNET ?= $(LOCALBIN)/jsonnet
 JSONNETFMT ?= $(LOCALBIN)/jsonnetfmt
 GOJSONTOYAML ?= $(LOCALBIN)/gojsontoyaml
+MARKDOWNFMT ?= $(LOCALBIN)/markdownfmt
 
 ## Tool Versions
 CHECKMAKE_VERSION ?= v0.3.2
@@ -71,7 +70,7 @@ YQ_VERSION ?= v4.52.4
 JSONNET_VERSION ?= v0.21.0
 JSONNETFMT_VERSION ?= v0.21.0
 GOJSONTOYAML_VERSION ?= v0.1.0
-
+MARKDOWNFMT_VERSION ?= v3.1.0
 
 
 
@@ -104,8 +103,6 @@ setup:
     rm vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz && \
     chmod +x $(ASSETS_DIR)/$(VALE); \
 	fi
-	# Setup markdownfmt.
-	@$(GO) install github.com/Kunde21/markdownfmt/v3/cmd/markdownfmt@$(MARKDOWNFMT_VERSION)
 	# Setup golangci-lint.
 	@$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	# Setup controller-gen.
@@ -151,6 +148,11 @@ $(JSONNETFMT): $(LOCALBIN)
 gojsontoyaml: $(GOJSONTOYAML) ## Download gojsontoyaml locally if necessary.
 $(GOJSONTOYAML): $(LOCALBIN)
 	$(call go-install-tool,$(GOJSONTOYAML),github.com/brancz/gojsontoyaml,$(GOJSONTOYAML_VERSION))
+
+.PHONY: markdownfmt
+markdownfmt: $(MARKDOWNFMT) ## Download markdownfmt locally if necessary.
+$(MARKDOWNFMT): $(LOCALBIN)
+	$(call go-install-tool,$(MARKDOWNFMT),github.com/Kunde21/markdownfmt/v3/cmd/markdownfmt,$(MARKDOWNFMT_VERSION))
 
 ##############
 # Generating #
@@ -335,17 +337,13 @@ vale: .vale.ini $(MD_FILES)
 	$(ASSETS_DIR)/$(VALE) sync && \
 	$(ASSETS_DIR)/$(VALE) $(MD_FILES)
 
-markdownfmt: $(MD_FILES)
+.PHONY: lint_md
+lint_md: $(MARKDOWNFMT) $(MD_FILES)
 	@test -z "$(shell $(MARKDOWNFMT) -l $(MD_FILES))" || (echo "The following files need to be formatted with 'markdownfmt -w -gofmt':" $(shell $(MARKDOWNFMT) -l $(MD_FILES)) "" && exit 1)
 
-markdownfmt_fix: $(MD_FILES)
-	@for file in $(MD_FILES); do markdownfmt -w -gofmt $$file || exit 1; done
-
-.PHONY: lint_md
-lint_md: vale markdownfmt
-
 .PHONY: lint_md_fix
-lint_md_fix: vale markdownfmt_fix
+lint_md_fix: vale $(MARKDOWNFMT) $(MD_FILES)
+	@for file in $(MD_FILES); do $(MARKDOWNFMT) -w -gofmt $$file || exit 1; done
 
 ###############
 # Linting: Go #
