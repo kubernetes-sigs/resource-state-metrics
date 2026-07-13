@@ -22,19 +22,14 @@ CONTROLLER_GEN_OUT_DIR ?= /tmp/resource-state-metrics/controller-gen
 CONTROLLER_GEN_VERSION ?= v0.16.5
 CREATED_AT_EPOCH ?=
 GO ?= go
-GOJSONTOYAML ?= $(GOBIN)/gojsontoyaml
-GOJSONTOYAML_VERSION ?= v0.1.0
 GOLANGCI_LINT ?= $(GOBIN)/golangci-lint
 GOLANGCI_LINT_CONFIG ?= .golangci.yaml
 GOLANGCI_LINT_VERSION ?= v2.10.1
 GOLDEN_FILES = $(shell find tests/golden -type f -name "*.yaml")
 GOLDEN_METRICS_FILE ?= tests/golden/metrics.txt
 GO_FILES = $(shell find . -type d -name vendor -prune -o -type f -name "*.go" -print)
-JSONNET ?= $(GOBIN)/jsonnet
-JSONNETFMT ?= $(GOBIN)/jsonnetfmt
 JSONNET_FILES = $(shell find jsonnet -type f -name "*.jsonnet" -o -name "*.libsonnet")
 JSONNET_MANIFESTS_DIR ?= jsonnet/manifests
-JSONNET_VERSION ?= v0.21.0
 KUBECTL ?= kubectl
 LOCAL_NAMESPACE ?= default
 MAIN_METRICS_PORT ?= 9999
@@ -66,10 +61,16 @@ $(LOCALBIN):
 ## Tool Binaries
 CHECKMAKE ?= $(LOCALBIN)/checkmake
 YQ ?= $(LOCALBIN)/yq
+JSONNET ?= $(LOCALBIN)/jsonnet
+JSONNETFMT ?= $(LOCALBIN)/jsonnetfmt
+GOJSONTOYAML ?= $(LOCALBIN)/gojsontoyaml
 
 ## Tool Versions
 CHECKMAKE_VERSION ?= v0.3.2
 YQ_VERSION ?= v4.52.4
+JSONNET_VERSION ?= v0.21.0
+JSONNETFMT_VERSION ?= v0.21.0
+GOJSONTOYAML_VERSION ?= v0.1.0
 
 
 
@@ -111,10 +112,6 @@ setup:
 	@$(GO) install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
 	# Setup code-generator.
 	@$(GO) install k8s.io/code-generator/cmd/...@$(CODE_GENERATOR_VERSION)
-	# Setup jsonnet.
-	@$(GO) install github.com/google/go-jsonnet/cmd/jsonnet@$(JSONNET_VERSION)
-	@$(GO) install github.com/google/go-jsonnet/cmd/jsonnetfmt@$(JSONNET_VERSION)
-	@$(GO) install github.com/brancz/gojsontoyaml@$(GOJSONTOYAML_VERSION)
 	# Setup yamlfmt.
 	@$(GO) install github.com/google/yamlfmt/cmd/yamlfmt@$(YAMLFMT_VERSION)
 	# Setup pre-commit hooks.
@@ -140,6 +137,21 @@ yq: $(YQ) ## Download yq locally if necessary.
 $(YQ): $(LOCALBIN)
 	$(call go-install-tool,$(YQ),github.com/mikefarah/yq/v4,$(YQ_VERSION))
 
+.PHONY: jsonnet
+jsonnet: $(JSONNET) ## Download jsonnet locally if necessary.
+$(JSONNET): $(LOCALBIN)
+	$(call go-install-tool,$(JSONNET),github.com/google/go-jsonnet/cmd/jsonnet,$(JSONNET_VERSION))
+
+.PHONY: jsonnetfmt
+jsonnetfmt: $(JSONNETFMT) ## Download jsonnetfmt locally if necessary.
+$(JSONNETFMT): $(LOCALBIN)
+	$(call go-install-tool,$(JSONNETFMT),github.com/google/go-jsonnet/cmd/jsonnetfmt,$(JSONNETFMT_VERSION))
+
+.PHONY: gojsontoyaml
+gojsontoyaml: $(GOJSONTOYAML) ## Download gojsontoyaml locally if necessary.
+$(GOJSONTOYAML): $(LOCALBIN)
+	$(call go-install-tool,$(GOJSONTOYAML),github.com/brancz/gojsontoyaml,$(GOJSONTOYAML_VERSION))
+
 ##############
 # Generating #
 ##############
@@ -158,8 +170,8 @@ codegen:
 	@./hack/update-codegen.sh
 
 .PHONY: jsonnet_manifests
-jsonnet_manifests: manifests
-	@CONTROLLER_GEN_VERSION=$(CONTROLLER_GEN_VERSION) VERSION=$(VERSION) NAMESPACE=$(LOCAL_NAMESPACE) PROJECT_NAME=$(PROJECT_NAME) ./hack/generate-yamls-from-jsonnets.sh
+jsonnet_manifests: $(JSONNET) $(GOJSONTOYAML) $(YQ) manifests
+	@CONTROLLER_GEN_VERSION=$(CONTROLLER_GEN_VERSION) VERSION=$(VERSION) NAMESPACE=$(LOCAL_NAMESPACE) PROJECT_NAME=$(PROJECT_NAME) JSONNET=$(JSONNET) GOJSONTOYAML=$(GOJSONTOYAML) YQ=$(YQ) ./hack/generate-yamls-from-jsonnets.sh
 
 .PHONY: generate
 generate: manifests codegen jsonnet_manifests
@@ -367,17 +379,13 @@ licensecheck_jsonnet: $(JSONNET_FILES)
 licensecheck_jsonnet_fix: $(JSONNET_FILES)
 	@./hack/fix-license-headers.sh $(JSONNET_FILES)
 
-jsonnetfmt: $(JSONNET_FILES)
+.PHONY: lint_jsonnet
+lint_jsonnet: $(JSONNETFMT) licensecheck_jsonnet
 	@test -z "$(shell $(JSONNETFMT) --test $(JSONNET_FILES) 2>&1)" || (echo "The following jsonnet files need to be formatted with 'jsonnetfmt -i':" && $(JSONNETFMT) --test $(JSONNET_FILES) && exit 1)
 
-jsonnetfmt_fix: $(JSONNET_FILES)
-	@$(JSONNETFMT) -i $(JSONNET_FILES)
-
-.PHONY: lint_jsonnet
-lint_jsonnet: licensecheck_jsonnet jsonnetfmt
-
 .PHONY: lint_jsonnet_fix
-lint_jsonnet_fix: licensecheck_jsonnet_fix jsonnetfmt_fix
+lint_jsonnet_fix: $(JSONNETFMT) licensecheck_jsonnet_fix
+	@$(JSONNETFMT) -i $(JSONNET_FILES)
 
 ###########
 # Cleanup #
