@@ -13,8 +13,7 @@ ASSETS_DIR ?= assets
 BOILERPLATE_GO_COMPLIANT ?= hack/boilerplate.go.txt
 BOILERPLATE_YAML_COMPLIANT ?= hack/boilerplate.yaml.txt
 BUILD_TAG ?= $(shell git describe --tags --exact-match 2>/dev/null || echo "latest")
-CHECKMAKE ?= $(GOBIN)/checkmake
-CHECKMAKE_VERSION ?= v0.3.2
+
 CODE_GENERATOR_VERSION ?= v0.32.3
 COMMON = github.com/prometheus/common
 CONTROLLER_GEN ?= $(GOBIN)/controller-gen
@@ -59,6 +58,22 @@ YAML_FILES = $(shell find . -type d -name vendor -prune -o -type d -name $(patsu
 YQ ?= $(GOBIN)/yq
 YQ_VERSION ?= v4.52.4
 
+##@ Dependencies
+
+## Location to install dependencies to
+LOCALBIN ?= $(shell pwd)/bin
+$(LOCALBIN):
+	mkdir -p $(LOCALBIN)
+
+## Tool Binaries
+CHECKMAKE ?= $(LOCALBIN)/checkmake
+
+## Tool Versions
+CHECKMAKE_VERSION ?= v0.3.2
+
+
+
+
 BRANCH = $(shell git rev-parse --abbrev-ref HEAD)
 BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
 GIT_COMMIT = $(shell git rev-parse --short HEAD)
@@ -98,8 +113,6 @@ setup:
 	@$(GO) install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
 	# Setup code-generator.
 	@$(GO) install k8s.io/code-generator/cmd/...@$(CODE_GENERATOR_VERSION)
-	# Setup checkmake.
-	@$(GO) install github.com/checkmake/checkmake/cmd/checkmake@$(CHECKMAKE_VERSION)
 	# Setup jsonnet.
 	@$(GO) install github.com/google/go-jsonnet/cmd/jsonnet@$(JSONNET_VERSION)
 	@$(GO) install github.com/google/go-jsonnet/cmd/jsonnetfmt@$(JSONNET_VERSION)
@@ -118,6 +131,11 @@ setup:
 .gitmessage: hack/check-conventional-commit.sh
 	@types=$$(grep 'ALLOWED_TYPES=' $< | cut -d'"' -f2 | tr '|' ' '); \
 	printf '\n# type: <subject>\n#\n# <body>\n#\n# Allowed types: %s\n#' "$$types" > $@
+
+.PHONY: checkmake
+checkmake: $(CHECKMAKE) ## Download checkmake locally if necessary.
+$(CHECKMAKE): $(LOCALBIN)
+	$(call go-install-tool,$(CHECKMAKE),github.com/checkmake/checkmake/cmd/checkmake,$(CHECKMAKE_VERSION))
 
 ##############
 # Generating #
@@ -267,11 +285,9 @@ lint_fix: lint_makefile lint_yaml_fix lint_md_fix lint_go_fix lint_jsonnet_fix
 # Linting: Makefile #
 #####################
 
-checkmake: Makefile
-	@$(CHECKMAKE) Makefile
-
 .PHONY: lint_makefile
-lint_makefile: checkmake
+lint_makefile: $(CHECKMAKE)
+	@$(CHECKMAKE) Makefile
 
 #################
 # Linting: YAML #
@@ -368,3 +384,19 @@ lint_jsonnet_fix: licensecheck_jsonnet_fix jsonnetfmt_fix
 clean:
 	@git clean -fxd
 
+
+# go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
+# $1 - target path with name of binary
+# $2 - package url which can be installed
+# $3 - specific version of package
+define go-install-tool
+@[ -f "$(1)-$(3)" ] && [ "$$(readlink -- "$(1)" 2>/dev/null)" = "$(1)-$(3)" ] || { \
+set -e; \
+package=$(2)@$(3) ;\
+echo "Downloading $${package}" ;\
+rm -f $(1) ;\
+GOBIN=$(LOCALBIN) go install $${package} ;\
+mv $(1) $(1)-$(3) ;\
+} ;\
+ln -sf $$(realpath $(1)-$(3)) $(1)
+endef
