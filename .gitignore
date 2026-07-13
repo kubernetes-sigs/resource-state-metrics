@@ -11,3 +11,4 @@ tests/golden/metrics.txt
 # `bench` artefacts
 ./wget-log*
 
+bin/
