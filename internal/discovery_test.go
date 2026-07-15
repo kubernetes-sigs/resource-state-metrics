@@ -195,6 +195,22 @@ func TestExpandWildcards(t *testing.T) {
 				{Name: "cronjobs", Kind: "CronJob", Namespaced: true},
 			},
 		},
+		{
+			// Create-only: not listable/watchable.
+			GroupVersion: "authentication.k8s.io/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "tokenreviews", Kind: "TokenReview", Namespaced: false, Verbs: []string{"create"}},
+			},
+		},
+		{
+			GroupVersion: "authorization.k8s.io/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "subjectaccessreviews", Kind: "SubjectAccessReview", Namespaced: false, Verbs: []string{"create"}},
+				{Name: "selfsubjectaccessreviews", Kind: "SelfSubjectAccessReview", Namespaced: false, Verbs: []string{"create"}},
+				{Name: "localsubjectaccessreviews", Kind: "LocalSubjectAccessReview", Namespaced: true, Verbs: []string{"create"}},
+				{Name: "selfsubjectrulesreviews", Kind: "SelfSubjectRulesReview", Namespaced: false, Verbs: []string{"create"}},
+			},
+		},
 	}
 
 	discovery := NewResourceDiscovery(fakeDiscovery, logger)
@@ -257,6 +273,46 @@ func TestExpandWildcards(t *testing.T) {
 				Resource: "*",
 			},
 			expectedCount: 1, // ReplicaSet
+		},
+		{
+			name: "wildcard sweep skips create-only resource in one group",
+			store: &v1alpha1.Store{
+				Group:    "authentication.k8s.io",
+				Version:  "v1",
+				Kind:     "*",
+				Resource: "*",
+			},
+			expectedCount: 0, // tokenreviews is create-only, not list+watch
+		},
+		{
+			name: "wildcard sweep skips all create-only resources in a group",
+			store: &v1alpha1.Store{
+				Group:    "authorization.k8s.io",
+				Version:  "v1",
+				Kind:     "*",
+				Resource: "*",
+			},
+			expectedCount: 0, // all authorization.k8s.io review resources are create-only
+		},
+		{
+			name: "explicitly named create-only resource is honoured",
+			store: &v1alpha1.Store{
+				Group:    "*", // wildcard group, but Kind/Resource named exactly
+				Version:  "v1",
+				Kind:     "TokenReview",
+				Resource: "tokenreviews",
+			},
+			expectedCount: 1, // named explicitly, not verb-filtered
+		},
+		{
+			name: "empty verbs are treated as unknown and not filtered",
+			store: &v1alpha1.Store{
+				Group:    "apps",
+				Version:  "v1",
+				Kind:     "*",
+				Resource: "*",
+			},
+			expectedCount: 3, // apps resources carry no Verbs in fixtures; still expand
 		},
 		{
 			name: "no wildcards returns store unchanged",

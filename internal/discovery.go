@@ -115,6 +115,22 @@ func (d *discoveryClient) ExpandWildcards(store *v1alpha1.Store) ([]v1alpha1.Sto
 			expanded.Kind = apiResource.Kind
 			expanded.Resource = apiResource.Name
 
+			// Informers require list+watch. Skip wildcard-matched resources
+			// that lack them (e.g. create-only TokenReview and the
+			// authorization.k8s.io review resources, whose REST storage
+			// supports only create; see k8s.io/kubernetes
+			// pkg/registry/{authentication,authorization}/rest) to avoid
+			// reflectors that fail with "the server does not allow this
+			// method". Explicitly named resources and those with no reported
+			// verbs are not filtered.
+			if wildcardMatchedResource(store) && len(apiResource.Verbs) > 0 && !supportsListWatch(apiResource.Verbs) {
+				d.logger.V(2).Info("Skipping wildcard-matched resource that does not support list+watch",
+					"resource", formatStorePattern(&expanded),
+					"verbs", apiResource.Verbs)
+
+				continue
+			}
+
 			d.logger.V(2).Info("Expanded wildcard store",
 				"pattern", formatStorePattern(store),
 				"expanded", formatStorePattern(&expanded))
@@ -132,6 +148,28 @@ func (d *discoveryClient) ExpandWildcards(store *v1alpha1.Store) ([]v1alpha1.Sto
 	}
 
 	return expandedStores, nil
+}
+
+// wildcardMatchedResource reports whether the store matches resources via a
+// wildcard Kind or Resource pattern rather than naming one exactly.
+func wildcardMatchedResource(store *v1alpha1.Store) bool {
+	return IsWildcard(store.Kind) || IsWildcard(store.Resource)
+}
+
+// supportsListWatch reports whether the verbs include both list and watch.
+func supportsListWatch(verbs []string) bool {
+	var hasList, hasWatch bool
+
+	for _, v := range verbs {
+		switch v {
+		case "list":
+			hasList = true
+		case "watch":
+			hasWatch = true
+		}
+	}
+
+	return hasList && hasWatch
 }
 
 // matchesPattern checks if a value matches a glob-style pattern.
