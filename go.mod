@@ -2,6 +2,8 @@ module github.com/kubernetes-sigs/resource-state-metrics
 
 go 1.25.0
 
+toolchain go1.25.12
+
 require (
 	github.com/KimMachineGun/automemlimit v0.7.0
 	github.com/google/cel-go v0.22.0
