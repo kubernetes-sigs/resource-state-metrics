@@ -17,6 +17,7 @@ limitations under the License.
 package internal
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"regexp"
@@ -184,9 +185,15 @@ func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) 
 
 		resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet := resolveLabels(metricLabels, resolverInstance, unstructured.Object)
 
-		resolvedValue, ok := resolveMetricValue(resolverInstance, metric.Value, unstructured.Object, resolvedExpandedLabelSet)
+		resolvedValue, ok, err := resolveMetricValue(resolverInstance, metric.Value, unstructured.Object, resolvedExpandedLabelSet)
+		if err != nil {
+			logger.V(1).Error(fmt.Errorf("error resolving metric value %q: %w", metric.Value, err), "skipping")
+			putBuilder(metricRawBuilder)
+
+			continue
+		}
+
 		if !ok {
-			logger.V(1).Error(fmt.Errorf("error resolving metric value %q", metric.Value), "skipping")
 			putBuilder(metricRawBuilder)
 
 			continue
@@ -276,22 +283,33 @@ func inheritMetricLabels(f *FamilyType, metric *v1alpha1.Metric) []v1alpha1.Labe
 // resolver returns a scalar, it is returned directly. If the resolver returns
 // a list (indexed keys like "fieldParent#N"), the values are collected in
 // order and stored in resolvedExpandedLabelSet under the sentinel key so that
-// writeMetricSamples can emit one sample per element.
-func resolveMetricValue(resolverInstance resolver.Resolver, valueExpr string, obj map[string]any, resolvedExpandedLabelSet map[string][]string) (string, bool) {
+// writeMetricSamples can emit one sample per element. Returns (value, ok, error):
+//   - ("value", true, nil): scalar or expanded list — emit metric(s)
+//   - ("", false, nil): empty result (e.g. guarded CEL expression) — skip silently
+//   - ("", false, err): resolution failed — caller should log
+func resolveMetricValue(resolverInstance resolver.Resolver, valueExpr string, obj map[string]any, resolvedExpandedLabelSet map[string][]string) (string, bool, error) {
 	resolvedValueMap := resolverInstance.Resolve(valueExpr, obj)
+
+	// An empty map means the expression evaluated successfully but
+	// produced no results (e.g. an empty list from a guarded CEL
+	// expression). This is not an error — silently emit zero samples.
+	if len(resolvedValueMap) == 0 {
+		return "", false, nil
+	}
+
 	if resolvedValue, found := resolvedValueMap[valueExpr]; found {
-		return resolvedValue, true
+		return resolvedValue, true, nil
 	}
 
 	expandedValues := collectIndexedResolvedValues(resolvedValueMap)
 
 	if len(expandedValues) == 0 {
-		return "", false
+		return "", false, errors.New("resolver returned non-empty map but no scalar or expanded values matched")
 	}
 
 	resolvedExpandedLabelSet[expandedValueSentinel] = expandedValues
 
-	return "", true
+	return "", true, nil
 }
 
 // resolveLabels resolves label keys and values including handling of composite map/list structures.

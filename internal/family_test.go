@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
+	"github.com/kubernetes-sigs/resource-state-metrics/pkg/resolver"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
 )
@@ -336,6 +337,82 @@ func Test_collectIndexedResolvedValues(t *testing.T) {
 
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Errorf("collectIndexedResolvedValues() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+type fakeResolver struct {
+	result map[string]string
+}
+
+func (f fakeResolver) Resolve(_ string, _ map[string]interface{}) map[string]string {
+	return f.result
+}
+
+func TestResolveMetricValue(t *testing.T) {
+	t.Parallel()
+
+	valueExpr := "value-expression"
+
+	type want struct {
+		value    string
+		ok       bool
+		err      bool
+		expanded []string
+	}
+
+	tests := []struct {
+		name     string
+		resolved map[string]string
+		want     want
+	}{
+		{
+			name:     "empty map skips silently without error",
+			resolved: map[string]string{},
+			want:     want{value: "", ok: false, err: false},
+		},
+		{
+			name:     "scalar match returns the value",
+			resolved: map[string]string{valueExpr: "3"},
+			want:     want{value: "3", ok: true, err: false},
+		},
+		{
+			name:     "expanded list is carried under the sentinel",
+			resolved: map[string]string{"conditions#0": "1", "conditions#1": "0"},
+			want:     want{value: "", ok: true, err: false, expanded: []string{"1", "0"}},
+		},
+		{
+			name:     "non-empty map with no scalar or expanded match errors",
+			resolved: map[string]string{"app": "foo"},
+			want:     want{value: "", ok: false, err: true},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			var resolverInstance resolver.Resolver = fakeResolver{result: testCase.resolved}
+
+			expanded := map[string][]string{}
+
+			value, ok, err := resolveMetricValue(resolverInstance, valueExpr, nil, expanded)
+
+			if value != testCase.want.value {
+				t.Errorf("value = %q, want %q", value, testCase.want.value)
+			}
+
+			if ok != testCase.want.ok {
+				t.Errorf("ok = %v, want %v", ok, testCase.want.ok)
+			}
+
+			if gotErr := err != nil; gotErr != testCase.want.err {
+				t.Errorf("err = %v, want error: %v", err, testCase.want.err)
+			}
+
+			if diff := cmp.Diff(testCase.want.expanded, expanded[expandedValueSentinel]); diff != "" {
+				t.Errorf("expanded values mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
