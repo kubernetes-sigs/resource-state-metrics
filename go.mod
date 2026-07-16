@@ -10,7 +10,6 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/common v0.70.0
 	go.starlark.net v0.0.0-20260210143700-b62fd896b91b
-	go.uber.org/automaxprocs v1.5.3
 	golang.org/x/text v0.40.0
 	golang.org/x/time v0.15.0
 	k8s.io/api v0.36.2

@@ -27,7 +27,6 @@ import (
 	clientset "github.com/kubernetes-sigs/resource-state-metrics/pkg/generated/clientset/versioned"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/options"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/signals"
-	"go.uber.org/automaxprocs/maxprocs"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -45,15 +44,6 @@ func main() {
 
 	options := options.NewOptions(logger)
 	options.Read()
-
-	// Set GOMAXPROCS based on CPU quota.
-	if *options.AutoGOMAXPROCS {
-		unset, err := maxprocs.Set(maxprocs.Logger(klog.Infof))
-		if err != nil {
-			logger.Error(err, "Error setting GOMAXPROCS")
-			unset()
-		}
-	}
 
 	// Set GOMEMLIMIT based on memory quota.
 	slogger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))

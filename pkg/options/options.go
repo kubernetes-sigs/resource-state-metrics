@@ -31,7 +31,6 @@ import (
 var (
 	flagOnce sync.Once
 	// Registered flag values.
-	registeredAutoGOMAXPROCS             *bool
 	registeredCardinalityWarningRatio    *float64
 	registeredCELCostLimit               *uint64
 	registeredCELTimeout                 *int
@@ -51,7 +50,6 @@ var (
 )
 
 const (
-	autoGOMAXPROCSFlagName             = "auto-gomaxprocs"
 	cardinalityWarningRatioFlagName    = "cardinality-warning-ratio"
 	celCostLimitFlagName               = "cel-cost-limit"
 	celTimeoutFlagName                 = "cel-timeout-seconds"
@@ -83,7 +81,6 @@ const (
 
 // Options represents the command-line Options.
 type Options struct {
-	AutoGOMAXPROCS             *bool
 	CardinalityWarningRatio    *float64
 	CELCostLimit               *uint64
 	CELTimeout                 *int
@@ -117,7 +114,6 @@ func (o *Options) Read() {
 	// Register flags only once to avoid "flag redefined" panics when multiple
 	// Options instances call Read() (e.g., in parallel tests).
 	flagOnce.Do(func() {
-		registeredAutoGOMAXPROCS = flag.Bool(autoGOMAXPROCSFlagName, true, "Automatically set GOMAXPROCS to match CPU quota.")
 		//nolint:lll
 		registeredCardinalityWarningRatio = flag.Float64(cardinalityWarningRatioFlagName, DefaultCardinalityWarningRatio, "Ratio of cardinality threshold at which to emit warning conditions (0.0-1.0). Default 0.8 means warnings start at 80% of threshold.")
 		//nolint:lll
@@ -171,7 +167,6 @@ func (o *Options) Read() {
 	})
 
 	// Copy registered values to this Options instance
-	o.AutoGOMAXPROCS = registeredAutoGOMAXPROCS
 	o.CardinalityWarningRatio = registeredCardinalityWarningRatio
 	o.CELCostLimit = registeredCELCostLimit
 	o.CELTimeout = registeredCELTimeout
