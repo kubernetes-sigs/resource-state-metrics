@@ -148,71 +148,79 @@ func generatePeripheralMetric(familyRawBuilder *strings.Builder, familyName stri
 }
 
 // buildMetricString returns the given family in its byte representation and the sample count.
-// If the family is cut off due to cardinality limits, it returns an empty string and 0.
+// The sample count always reflects the family's true cardinality, even when cut off, so that
+// cardinality tracking stays accurate and idempotent across reprocessing (e.g. informer relists).
+// If the family is cut off due to cardinality limits, the returned string is empty, suppressing
+// output, while the real sample count is still returned.
 func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) (string, int64) {
 	logger := f.logger.WithValues("family", f.Name)
+	cutoff := f.IsCutoff()
 
-	if f.IsCutoff() {
-		logger.V(1).Info("Family is cut off due to cardinality limits, skipping metric generation")
-
-		return "", 0
-	}
-
-	// Use Starlark resolver if configured
-	if f.starlarkResolver != nil {
-		return f.buildMetricStringFromStarlark(unstructured)
-	}
-
-	familyRawBuilder := getBuilder()
-	defer putBuilder(familyRawBuilder)
+	var metricStr string
 
 	var sampleCount int64
 
-	for i := range f.Metrics {
-		metric := &f.Metrics[i]
-		metricRawBuilder := getBuilder()
+	switch {
+	case f.starlarkResolver != nil:
+		metricStr, sampleCount = f.buildMetricStringFromStarlark(unstructured)
+	default:
+		familyRawBuilder := getBuilder()
+		defer putBuilder(familyRawBuilder)
 
-		// Combine metric labels with family labels
-		metricLabels := inheritMetricLabels(f, metric)
+		for i := range f.Metrics {
+			metric := &f.Metrics[i]
+			metricRawBuilder := getBuilder()
 
-		resolverInstance, err := f.resolver(metric.Resolver)
-		if err != nil {
-			logger.V(1).Error(fmt.Errorf("error resolving metric: %w", err), "skipping")
+			// Combine metric labels with family labels
+			metricLabels := inheritMetricLabels(f, metric)
+
+			resolverInstance, err := f.resolver(metric.Resolver)
+			if err != nil {
+				logger.V(1).Error(fmt.Errorf("error resolving metric: %w", err), "skipping")
+				putBuilder(metricRawBuilder)
+
+				continue
+			}
+
+			resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet := resolveLabels(metricLabels, resolverInstance, unstructured.Object)
+
+			resolvedValue, ok, err := resolveMetricValue(resolverInstance, metric.Value, unstructured.Object, resolvedExpandedLabelSet)
+			if err != nil {
+				logger.V(1).Error(fmt.Errorf("error resolving metric value %q: %w", metric.Value, err), "skipping")
+				putBuilder(metricRawBuilder)
+
+				continue
+			}
+
+			if !ok {
+				putBuilder(metricRawBuilder)
+
+				continue
+			}
+
+			samples, err := writeMetricSamplesWithCount(metricRawBuilder, f.Name, f.kind(), unstructured, resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet, resolvedValue, logger)
+			if err != nil {
+				putBuilder(metricRawBuilder)
+
+				continue
+			}
+
+			sampleCount += samples
+
+			familyRawBuilder.WriteString(metricRawBuilder.String())
 			putBuilder(metricRawBuilder)
-
-			continue
 		}
 
-		resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet := resolveLabels(metricLabels, resolverInstance, unstructured.Object)
-
-		resolvedValue, ok, err := resolveMetricValue(resolverInstance, metric.Value, unstructured.Object, resolvedExpandedLabelSet)
-		if err != nil {
-			logger.V(1).Error(fmt.Errorf("error resolving metric value %q: %w", metric.Value, err), "skipping")
-			putBuilder(metricRawBuilder)
-
-			continue
-		}
-
-		if !ok {
-			putBuilder(metricRawBuilder)
-
-			continue
-		}
-
-		samples, err := writeMetricSamplesWithCount(metricRawBuilder, f.Name, f.kind(), unstructured, resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet, resolvedValue, logger)
-		if err != nil {
-			putBuilder(metricRawBuilder)
-
-			continue
-		}
-
-		sampleCount += samples
-
-		familyRawBuilder.WriteString(metricRawBuilder.String())
-		putBuilder(metricRawBuilder)
+		metricStr = familyRawBuilder.String()
 	}
 
-	return familyRawBuilder.String(), sampleCount
+	if cutoff {
+		logger.V(1).Info("Family is cut off due to cardinality limits, suppressing metric output")
+
+		return "", sampleCount
+	}
+
+	return metricStr, sampleCount
 }
 
 // buildMetricStringFromStarlark resolves metrics using the Starlark resolver.
