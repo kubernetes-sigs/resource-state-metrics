@@ -87,10 +87,13 @@ func (s *StoreType) Add(objectI interface{}) error {
 	result := s.generateMetricsForObject(unstructuredObject)
 	s.metrics[unstructuredObject.GetUID()] = result.metrics
 
-	// Update cardinality tracking if tracker is initialized
+	// Cardinality enforcement is soft: metrics are generated first, then the
+	// threshold is checked. The object that tips the total over a limit still
+	// emits metrics on this pass; cutoff takes effect on the next reprocessing
+	// (e.g. an informer relist), when generateMetricsForObject sees the cutoff
+	// flag and returns empty strings that overwrite the cached output.
 	if s.cardinalityTracker != nil {
 		s.cardinalityTracker.Update(unstructuredObject.GetUID(), result.perFamily)
-		// Check thresholds and update cutoff state
 		s.checkAndApplyThresholds()
 	}
 
