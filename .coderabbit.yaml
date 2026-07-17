@@ -1,0 +1,31 @@
+# Disable CodeRabbit entirely.
+# The app cannot be removed from this repository, so this config
+# turns off every feature surface it exposes.
+
+reviews:
+  auto_review:
+    enabled: false
+  high_level_summary: false
+  review_status: false
+  commit_status: false
+  suggested_labels: false
+  suggested_reviewers: false
+  sequence_diagrams: false
+  related_issues: false
+  related_prs: false
+  assess_linked_issues: false
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+    autofix:
+      enabled: false
+
+chat:
+  auto_reply: false
+
+knowledge_base:
+  opt_out: true
