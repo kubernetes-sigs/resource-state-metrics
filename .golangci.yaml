@@ -198,6 +198,9 @@ linters:
               desc: Use 'errors' or 'fmt' instead.
             - pkg: golang.org/x/exp/slices
               desc: Use 'slices' instead.
+    gomoddirectives:
+      replace-allow-list:
+        - k8s.io/kube-state-metrics/v2
     funlen:
       lines: 80
       statements: 60
