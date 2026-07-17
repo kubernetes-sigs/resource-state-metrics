@@ -121,7 +121,7 @@ func buildMetricHeaders(metricFamilies []*FamilyType) []string {
 	return headers
 }
 
-func startReflector(ctx context.Context, lw *cache.ListWatch, gvkWithR gvkr, s *StoreType) {
+func startReflector(ctx context.Context, lw cache.ListerWatcher, gvkWithR gvkr, s *StoreType) {
 	wrapper := &unstructured.Unstructured{}
 	wrapper.SetGroupVersionKind(gvkWithR.GroupVersionKind)
 
@@ -138,13 +138,13 @@ func buildLW(
 	labelSelector string,
 	fieldSelector string,
 	gvr schema.GroupVersionResource,
-) *cache.ListWatch {
+) cache.ListerWatcher {
 	lwo := metav1.ListOptions{
 		LabelSelector: labelSelector,
 		FieldSelector: fieldSelector,
 	}
 
-	return &cache.ListWatch{
+	lw := &cache.ListWatch{
 		ListFunc: func(_ metav1.ListOptions) (runtime.Object, error) {
 			o, err := dynamicClientset.Resource(gvr).List(ctx, lwo)
 			if err != nil {
@@ -162,4 +162,10 @@ func buildLW(
 			return o, err
 		},
 	}
+
+	// Let the reflector know whether dynamicClientset actually supports
+	// streaming watch-lists (e.g. fake clients used in tests do not), so it
+	// doesn't hang waiting for an initial-events-end bookmark that will
+	// never arrive.
+	return cache.ToListWatcherWithWatchListSemantics(lw, dynamicClientset)
 }
