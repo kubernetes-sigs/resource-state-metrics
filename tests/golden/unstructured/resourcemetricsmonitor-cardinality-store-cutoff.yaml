@@ -14,9 +14,19 @@
 # limitations under the License.
 name: resourcemetricsmonitor-cardinality-store-cutoff
 description: >
-  Test store-level cardinality cutoff. This RMM has a generator with
-  cardinalityLimit of 2, meaning only 2 total samples across all families
-  should be generated before the entire store is cut off.
+  Test store-level cardinality cutoff. The Bar store has a cardinalityLimit of
+  1, so once both Bar objects are processed the store total (2) exceeds the
+  limit and every family in that store is cut off — no metrics are emitted from
+  it. A second, unconstrained Foo store is present solely to give the metrics
+  assertion something to check; the cutoff itself is verified via the status
+  conditions and cardinality totals.
+
+  Note: cutoff is soft — metrics are generated for an object first, then the
+  threshold is checked. The object that tips the store over its limit still
+  emits metrics on that initial pass; only subsequent reprocessing (e.g. after
+  an informer relist) suppresses output. This is why the metrics block asserts
+  nothing from the Bar store: by the time the test checks, a relist has
+  occurred and the cached strings have been overwritten with empty output.
 in:
   apiVersion: resource-state-metrics.instrumentation.k8s-sigs.io/v1alpha1
   kind: ResourceMetricsMonitor
@@ -34,18 +44,28 @@ in:
           cardinalityLimit: 1
           families:
             - name: "cardinality_store_cutoff_test"
-              help: "Store cutoff test - store limit 2"
+              help: "Store cutoff test - store limit 1"
               metrics:
                 - labels: []
                   value: "1"
+        - group: "samplecontroller.k8s.io"
+          version: "v1alpha1"
+          kind: "Foo"
+          resource: "foos"
+          resolver: unstructured
+          families:
+            - name: "cardinality_store_cutoff_unconstrained"
+              help: "Unconstrained Foo store; always emits metrics"
+              metrics:
+                - labels: []
+                  value: "spec.replicas"
 metrics:
-  - '# HELP kube_customresource_cardinality_store_cutoff_test Store cutoff test - store limit 2'
-  - '# TYPE kube_customresource_cardinality_store_cutoff_test gauge'
-  - 'kube_customresource_cardinality_store_cutoff_test{group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample",namespace="default"} 1.000000'
-  - 'kube_customresource_cardinality_store_cutoff_test{group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample-secondary",namespace="default"} 1.000000'
+  - '# HELP kube_customresource_cardinality_store_cutoff_unconstrained Unconstrained Foo store; always emits metrics'
+  - '# TYPE kube_customresource_cardinality_store_cutoff_unconstrained gauge'
+  - 'kube_customresource_cardinality_store_cutoff_unconstrained{group="samplecontroller.k8s.io",version="v1alpha1",kind="Foo",name="test-sample",namespace="default"} 1.000000'
 status:
   cardinality:
-    total: 2
+    total: 3
     thresholdsExceeded: true
   conditions:
     - type: Processed
