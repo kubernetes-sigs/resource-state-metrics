@@ -17,6 +17,7 @@ limitations under the License.
 package framework
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -249,19 +250,43 @@ type GoldenRule struct {
 	Status      *v1alpha1.ResourceMetricsMonitorStatus `yaml:"status"`
 }
 
-// GoldenRuleFromYAML loads a golden rule from a YAML file.
-func GoldenRuleFromYAML(_ context.Context, path string) (*GoldenRule, error) {
+// GoldenRulesFromYAML loads all golden rules from a (possibly multi-document) YAML file.
+// Documents are separated by "---" lines; each document must have a non-empty name field.
+func GoldenRulesFromYAML(_ context.Context, path string) ([]*GoldenRule, error) {
 	data, err := os.ReadFile(ensureSafePath(path))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read YAML file %s: %w", path, err)
 	}
 
-	goldenRule := &GoldenRule{}
-	if err := yaml.Unmarshal(data, goldenRule); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal YAML: %w", err)
+	// Normalise Windows line endings, then split on YAML document separators.
+	data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
+	docs := bytes.Split(data, []byte("\n---\n"))
+
+	var rules []*GoldenRule
+
+	for _, doc := range docs {
+		// The very first document may start with "---"; strip it.
+		doc = bytes.TrimPrefix(bytes.TrimSpace(doc), []byte("---"))
+		doc = bytes.TrimSpace(doc)
+
+		if len(doc) == 0 {
+			continue
+		}
+
+		goldenRule := &GoldenRule{}
+		if err := yaml.Unmarshal(doc, goldenRule); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal YAML document in %s: %w", path, err)
+		}
+
+		// Skip documents that are all comments or whitespace (name will be empty).
+		if goldenRule.Name == "" {
+			continue
+		}
+
+		rules = append(rules, goldenRule)
 	}
 
-	return goldenRule, nil
+	return rules, nil
 }
 
 // ApplyCRFromYAML applies a custom resource from a YAML file.

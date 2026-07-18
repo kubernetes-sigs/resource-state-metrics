@@ -234,21 +234,22 @@ func testResolver(ctx context.Context, t *testing.T, f *framework.Framework, res
 	}
 
 	for _, file := range files {
-		testName := strings.TrimSuffix(filepath.Base(file), ".yaml")
-		t.Run(testName, func(t *testing.T) {
-			testGoldenRule(ctx, t, f, file)
-		})
+		goldenRules, err := framework.GoldenRulesFromYAML(ctx, file)
+		if err != nil {
+			t.Fatalf("Failed to load golden rules from %s: %v", file, err)
+		}
+
+		for _, rule := range goldenRules {
+			t.Run(rule.Name, func(t *testing.T) {
+				testGoldenRule(ctx, t, f, rule)
+			})
+		}
 	}
 }
 
-// testGoldenRule tests a single golden rule file.
-func testGoldenRule(ctx context.Context, t *testing.T, f *framework.Framework, filePath string) {
+// testGoldenRule tests a single golden rule.
+func testGoldenRule(ctx context.Context, t *testing.T, f *framework.Framework, goldenRule *framework.GoldenRule) {
 	t.Helper()
-
-	goldenRule, err := framework.GoldenRuleFromYAML(ctx, filePath)
-	if err != nil {
-		t.Fatalf("Failed to load golden rule from %s: %v", filePath, err)
-	}
 
 	if goldenRule.In == nil {
 		t.Skipf("Golden rule has no input resource defined, skipping")
