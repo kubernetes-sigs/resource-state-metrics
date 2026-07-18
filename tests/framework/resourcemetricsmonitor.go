@@ -44,30 +44,32 @@ func LoadRMMsFromGoldenRules(ctx context.Context) ([]runtime.Object, error) {
 	})
 
 	for _, file := range files {
-		goldenRule, err := GoldenRuleFromYAML(ctx, file)
+		goldenRules, err := GoldenRulesFromYAML(ctx, file)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load golden rule from %s: %w", file, err)
+			return nil, fmt.Errorf("failed to load golden rules from %s: %w", file, err)
 		}
 
-		if goldenRule.In == nil {
-			return nil, fmt.Errorf("golden rule %s has no input resource defined", file)
-		}
+		for _, goldenRule := range goldenRules {
+			if goldenRule.In == nil {
+				return nil, fmt.Errorf("golden rule %q in %s has no input resource defined", goldenRule.Name, file)
+			}
 
-		if goldenRule.In.GetKind() != ResourceMetricsMonitorKind {
-			return nil, fmt.Errorf("golden rule %s input resource is not a ResourceMetricsMonitor", file)
-		}
+			if goldenRule.In.GetKind() != ResourceMetricsMonitorKind {
+				return nil, fmt.Errorf("golden rule %q in %s input resource is not a ResourceMetricsMonitor", goldenRule.Name, file)
+			}
 
-		var rmm v1alpha1.ResourceMetricsMonitor
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(goldenRule.In.Object, &rmm); err != nil {
-			return nil, fmt.Errorf("failed to convert unstructured to RMM for golden rule %s: %w", file, err)
-		}
+			var rmm v1alpha1.ResourceMetricsMonitor
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(goldenRule.In.Object, &rmm); err != nil {
+				return nil, fmt.Errorf("failed to convert unstructured to RMM for golden rule %q in %s: %w", goldenRule.Name, file, err)
+			}
 
-		// Assign a UID if absent.
-		if rmm.GetUID() == "" {
-			rmm.SetUID(uuid.NewUUID())
-		}
+			// Assign a UID if absent.
+			if rmm.GetUID() == "" {
+				rmm.SetUID(uuid.NewUUID())
+			}
 
-		rmms = append(rmms, &rmm)
+			rmms = append(rmms, &rmm)
+		}
 	}
 
 	return rmms, nil
