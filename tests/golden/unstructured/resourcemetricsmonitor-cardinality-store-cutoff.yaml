@@ -16,17 +16,17 @@ name: resourcemetricsmonitor-cardinality-store-cutoff
 description: >
   Test store-level cardinality cutoff. The Bar store has a cardinalityLimit of
   1, so once both Bar objects are processed the store total (2) exceeds the
-  limit and every family in that store is cut off — no metrics are emitted from
-  it. A second, unconstrained Foo store is present solely to give the metrics
-  assertion something to check; the cutoff itself is verified via the status
-  conditions and cardinality totals.
+  limit and every family in that store is cut off — on subsequent reprocessing
+  no metrics are emitted from it.
+
+  A second, unconstrained Foo store is present to give the metrics assertion
+  something stable to check. The Bar store cutoff itself is verified via the
+  status conditions and cardinality totals.
 
   Note: cutoff is soft — metrics are generated for an object first, then the
   threshold is checked. The object that tips the store over its limit still
   emits metrics on that initial pass; only subsequent reprocessing (e.g. after
-  an informer relist) suppresses output. This is why the metrics block asserts
-  nothing from the Bar store: by the time the test checks, a relist has
-  occurred and the cached strings have been overwritten with empty output.
+  an informer relist) suppresses output.
 in:
   apiVersion: resource-state-metrics.instrumentation.k8s-sigs.io/v1alpha1
   kind: ResourceMetricsMonitor
