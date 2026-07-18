@@ -145,18 +145,22 @@ func buildLW(
 	}
 
 	lw := &cache.ListWatch{
-		ListFunc: func(_ metav1.ListOptions) (runtime.Object, error) {
-			o, err := dynamicClientset.Resource(gvr).List(ctx, lwo)
+		ListFunc: func(opts metav1.ListOptions) (runtime.Object, error) {
+			opts.LabelSelector = lwo.LabelSelector
+			opts.FieldSelector = lwo.FieldSelector
+			o, err := dynamicClientset.Resource(gvr).List(ctx, opts)
 			if err != nil {
-				err = fmt.Errorf("error listing %s with options %v: %w", gvr.String(), lwo, err)
+				err = fmt.Errorf("error listing %s with options %v: %w", gvr.String(), opts, err)
 			}
 
 			return o, err
 		},
-		WatchFunc: func(_ metav1.ListOptions) (watch.Interface, error) {
-			o, err := dynamicClientset.Resource(gvr).Watch(ctx, lwo)
+		WatchFunc: func(opts metav1.ListOptions) (watch.Interface, error) {
+			opts.LabelSelector = lwo.LabelSelector
+			opts.FieldSelector = lwo.FieldSelector
+			o, err := dynamicClientset.Resource(gvr).Watch(ctx, opts)
 			if err != nil {
-				err = fmt.Errorf("error watching %s with options %v: %w", gvr.String(), lwo, err)
+				err = fmt.Errorf("error watching %s with options %v: %w", gvr.String(), opts, err)
 			}
 
 			return o, err

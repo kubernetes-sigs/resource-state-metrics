@@ -1,0 +1,65 @@
+---
+# Copyright 2026 The Kubernetes resource-state-metrics Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+name: resourcemetricsmonitor-cardinality-store-cutoff-initial
+description: >
+  Test the soft-cutoff behavior at the store level. The Bar store's
+  cardinalityLimit is 1; after both Bar objects are processed the total (2)
+  exceeds the limit.
+
+  Cutoff is soft: metrics are generated for an object first, then the threshold
+  is evaluated. The object that tips the total over the limit still emits
+  metrics on that initial pass. This case asserts those metrics — both Bar
+  samples are visible immediately after the initial pass, before any subsequent
+  reprocessing would suppress them.
+in:
+  apiVersion: resource-state-metrics.instrumentation.k8s-sigs.io/v1alpha1
+  kind: ResourceMetricsMonitor
+  metadata:
+    name: resourcemetricsmonitor-cardinality-store-cutoff-initial
+    namespace: default
+  spec:
+    configuration:
+      stores:
+        - group: "samplecontroller.k8s.io"
+          version: "v1beta1"
+          kind: "Bar"
+          resource: "bars"
+          resolver: unstructured
+          cardinalityLimit: 1
+          families:
+            - name: "cardinality_store_cutoff_initial_test"
+              help: "Store cutoff initial test - store limit 1"
+              metrics:
+                - labels: []
+                  value: "1"
+metrics:
+  - '# HELP kube_customresource_cardinality_store_cutoff_initial_test Store cutoff initial test - store limit 1'
+  - '# TYPE kube_customresource_cardinality_store_cutoff_initial_test gauge'
+  - 'kube_customresource_cardinality_store_cutoff_initial_test{group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample",namespace="default"} 1.000000'
+  - 'kube_customresource_cardinality_store_cutoff_initial_test{group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample-secondary",namespace="default"} 1.000000'
+status:
+  cardinality:
+    total: 2
+    thresholdsExceeded: true
+  conditions:
+    - type: Processed
+      status: "True"
+      reason: EventHandlerSucceeded
+    - type: CardinalityCutoff
+      status: "True"
+      reason: CardinalityCutoff
+    - type: CardinalityWarning
+      status: "True"
+      reason: CardinalityWarning
