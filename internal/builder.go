@@ -144,10 +144,11 @@ func buildLW(
 		FieldSelector: fieldSelector,
 	}
 
-	lw := &cache.ListWatch{
+	listWatcher := &cache.ListWatch{
 		ListFunc: func(opts metav1.ListOptions) (runtime.Object, error) {
 			opts.LabelSelector = lwo.LabelSelector
 			opts.FieldSelector = lwo.FieldSelector
+
 			o, err := dynamicClientset.Resource(gvr).List(ctx, opts)
 			if err != nil {
 				err = fmt.Errorf("error listing %s with options %v: %w", gvr.String(), opts, err)
@@ -158,6 +159,7 @@ func buildLW(
 		WatchFunc: func(opts metav1.ListOptions) (watch.Interface, error) {
 			opts.LabelSelector = lwo.LabelSelector
 			opts.FieldSelector = lwo.FieldSelector
+
 			o, err := dynamicClientset.Resource(gvr).Watch(ctx, opts)
 			if err != nil {
 				err = fmt.Errorf("error watching %s with options %v: %w", gvr.String(), opts, err)
@@ -171,5 +173,5 @@ func buildLW(
 	// streaming watch-lists (e.g. fake clients used in tests do not), so it
 	// doesn't hang waiting for an initial-events-end bookmark that will
 	// never arrive.
-	return cache.ToListWatcherWithWatchListSemantics(lw, dynamicClientset)
+	return cache.ToListWatcherWithWatchListSemantics(listWatcher, dynamicClientset)
 }

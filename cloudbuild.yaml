@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+---
 # See https://cloud.google.com/cloud-build/docs/build-config
 timeout: 2700s
 # ALLOW_LOOSE lets Cloud Build define substitution variables (e.g., _GIT_TAG)

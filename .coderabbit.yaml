@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 ---
-# Disable CodeRabbit entirely.
-# The app cannot be removed from this repository, so this config
-# turns off every feature surface it exposes.
-
 reviews:
   auto_review:
     enabled: false
@@ -37,9 +33,11 @@ reviews:
       enabled: false
     autofix:
       enabled: false
+# Disable CodeRabbit entirely.
+# The app cannot be removed from this repository, so this config
+# turns off every feature surface it exposes.
 
 chat:
   auto_reply: false
-
 knowledge_base:
   opt_out: true
