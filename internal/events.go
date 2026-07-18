@@ -256,7 +256,7 @@ func (c *Controller) updateMetadata(ctx context.Context, resource *v1alpha1.Reso
 	logger := klog.FromContext(ctx)
 	kObj := klog.KObj(resource).String()
 
-	return wait.PollUntilContextTimeout(ctx, time.Second, time.Minute, false, func(pollCtx context.Context) (bool, error) {
+	return wait.PollUntilContextTimeout(ctx, time.Second, time.Minute, true, func(pollCtx context.Context) (bool, error) {
 		gotResource, err := c.rsmClientset.ResourceStateMetricsV1alpha1().ResourceMetricsMonitors(resource.GetNamespace()).Get(pollCtx, resource.GetName(), metav1.GetOptions{})
 		if err != nil {
 			return false, fmt.Errorf("failed to get %s: %w", kObj, err)
