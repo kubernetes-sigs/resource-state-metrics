@@ -16,10 +16,8 @@ BUILD_TAG ?= $(shell git describe --tags --exact-match 2>/dev/null || echo "late
 
 CODE_GENERATOR_VERSION ?= v0.32.3
 COMMON = github.com/prometheus/common
-CONTROLLER_GEN ?= $(GOBIN)/controller-gen
 CONTROLLER_GEN_APIS_DIR ?= pkg/apis
 CONTROLLER_GEN_OUT_DIR ?= /tmp/resource-state-metrics/controller-gen
-CONTROLLER_GEN_VERSION ?= v0.16.5
 CREATED_AT_EPOCH ?=
 GO ?= go
 GOLANGCI_LINT_CONFIG ?= .golangci.yaml
@@ -61,6 +59,7 @@ GOJSONTOYAML ?= $(LOCALBIN)/gojsontoyaml
 MARKDOWNFMT ?= $(LOCALBIN)/markdownfmt
 YAMLFMT ?= $(LOCALBIN)/yamlfmt
 GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
+CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 
 ## Tool Versions
 CHECKMAKE_VERSION ?= v0.3.2
@@ -71,6 +70,7 @@ GOJSONTOYAML_VERSION ?= v0.1.0
 MARKDOWNFMT_VERSION ?= v3.1.0
 YAMLFMT_VERSION ?= v0.16.0
 GOLANGCI_LINT_VERSION ?= v2.10.1
+CONTROLLER_GEN_VERSION ?= v0.16.5
 
 
 
@@ -103,8 +103,6 @@ setup:
     rm vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz && \
     chmod +x $(ASSETS_DIR)/$(VALE); \
 	fi
-	# Setup controller-gen.
-	@$(GO) install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
 	# Setup code-generator.
 	@$(GO) install k8s.io/code-generator/cmd/...@$(CODE_GENERATOR_VERSION)
 	# Setup pre-commit hooks.
@@ -160,12 +158,17 @@ golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
+.PHONY: controller-gen
+controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
+$(CONTROLLER_GEN): $(LOCALBIN)
+	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_GEN_VERSION))
+
 ##############
 # Generating #
 ##############
 
 .PHONY: manifests
-manifests:
+manifests: $(CONTROLLER_GEN)
 	@$(CONTROLLER_GEN) \
 	rbac:headerFile=$(BOILERPLATE_YAML_COMPLIANT),roleName=$(PROJECT_NAME) crd:headerFile=$(BOILERPLATE_YAML_COMPLIANT) paths=./$(CONTROLLER_GEN_APIS_DIR)/... \
 	output:rbac:artifacts:config=$(CONTROLLER_GEN_OUT_DIR) output:crd:dir=$(CONTROLLER_GEN_OUT_DIR) && \
