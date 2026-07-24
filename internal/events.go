@@ -390,6 +390,23 @@ func (c *Controller) updateCardinalityStatus(ctx context.Context, resource *v1al
 	c.updateCardinalityMetrics(resource, agg)
 	c.recordCardinalityViolations(resource, agg.violations)
 
+	for _, v := range agg.violations {
+		switch v.Severity {
+		case SeverityCutoff:
+			logger.Error(errors.New("cardinality threshold exceeded"), "metric generation cut off",
+				"level", v.Level,
+				"name", v.Name,
+				"current", v.Current,
+				"threshold", v.Threshold)
+		case SeverityWarning:
+			logger.V(1).Info("Cardinality threshold warning limit reached",
+				"level", v.Level,
+				"name", v.Name,
+				"current", v.Current,
+				"threshold", v.Threshold)
+		}
+	}
+
 	return c.persistCardinalityStatus(ctx, resource, agg)
 }
 
