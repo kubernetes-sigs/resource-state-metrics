@@ -41,6 +41,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
@@ -63,6 +64,16 @@ const (
 
 // schemeOnce ensures scheme registration happens only once (thread-safe for parallel tests).
 var schemeOnce sync.Once
+
+// workItem is a single workqueue entry. uid is captured at enqueue time,
+// rather than re-derived when the item is processed, because a deleteEvent's
+// underlying resource is already gone from both the API server and the
+// informer cache by the time syncHandler runs, and c.stores is keyed by UID.
+type workItem struct {
+	key   string
+	event string
+	uid   types.UID
+}
 
 // NOTE: When adding new metrics, consider revisiting the alerting mixins.
 type metrics struct {
@@ -90,7 +101,7 @@ type Controller struct {
 	dynamicClientset         dynamic.Interface
 	resourceDiscovery        ResourceDiscovery
 	rsmInformerFactory       informers.SharedInformerFactory
-	workqueue                workqueue.TypedRateLimitingInterface[[2]string]
+	workqueue                workqueue.TypedRateLimitingInterface[workItem]
 	recorder                 record.EventRecorder
 	stores                   sync.Map
 	options                  *options.Options
@@ -123,8 +134,8 @@ func NewController(
 	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: version.ControllerName.String()})
 
 	ratelimiter := workqueue.NewTypedMaxOfRateLimiter(
-		workqueue.NewTypedItemExponentialFailureRateLimiter[[2]string](rateLimiterBaseDelay, rateLimiterMaxDelay),
-		&workqueue.TypedBucketRateLimiter[[2]string]{Limiter: rate.NewLimiter(rate.Limit(rateLimiterQPS), rateLimiterBurst)},
+		workqueue.NewTypedItemExponentialFailureRateLimiter[workItem](rateLimiterBaseDelay, rateLimiterMaxDelay),
+		&workqueue.TypedBucketRateLimiter[workItem]{Limiter: rate.NewLimiter(rate.Limit(rateLimiterQPS), rateLimiterBurst)},
 	)
 
 	controller := &Controller{
@@ -133,7 +144,7 @@ func NewController(
 		dynamicClientset:   dynamicClientset,
 		resourceDiscovery:  NewResourceDiscovery(discoveryClient, logger),
 		rsmInformerFactory: informers.NewSharedInformerFactory(rsmClientset, 0),
-		workqueue:          workqueue.NewTypedRateLimitingQueue[[2]string](ratelimiter),
+		workqueue:          workqueue.NewTypedRateLimitingQueue[workItem](ratelimiter),
 		recorder:           recorder,
 		options:            options,
 		globalCardinalityManager: NewGlobalCardinalityManager(
@@ -348,41 +359,55 @@ func (c *Controller) updateHandler(logger klog.Logger) func(interface{}, interfa
 }
 
 func (c *Controller) enqueue(obj interface{}, event eventType) {
-	key, err := cache.MetaNamespaceKeyFunc(obj)
+	object, ok := obj.(metav1.Object)
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			utilruntime.HandleError(fmt.Errorf("error decoding object, invalid type %T", obj))
+
+			return
+		}
+
+		object, ok = tombstone.Obj.(metav1.Object)
+		if !ok {
+			utilruntime.HandleError(fmt.Errorf("error decoding object tombstone, invalid type %T", tombstone.Obj))
+
+			return
+		}
+	}
+
+	key, err := cache.MetaNamespaceKeyFunc(object)
 	if err != nil {
 		utilruntime.HandleError(err)
 
 		return
 	}
 
-	c.workqueue.Add([2]string{key, event.String()})
+	c.workqueue.Add(workItem{key: key, event: event.String(), uid: object.GetUID()})
 }
 
 func (c *Controller) processNextWorkItem(ctx context.Context) bool {
 	logger := klog.FromContext(ctx)
 
-	objectWithEvent, shutdown := c.workqueue.Get()
+	item, shutdown := c.workqueue.Get()
 	if shutdown {
 		return false
 	}
 
-	err := func(objectWithEvent [2]string) error {
-		defer c.workqueue.Done(objectWithEvent)
+	err := func(item workItem) error {
+		defer c.workqueue.Done(item)
 
-		key := objectWithEvent[0]
-		event := objectWithEvent[1]
+		if err := c.syncHandler(ctx, item.key, item.event, item.uid); err != nil {
+			c.workqueue.AddRateLimited(item)
 
-		if err := c.syncHandler(ctx, key, event); err != nil {
-			c.workqueue.AddRateLimited(objectWithEvent)
-
-			return fmt.Errorf("error syncing '%s': %s, requeuing", key, err.Error())
+			return fmt.Errorf("error syncing '%s': %s, requeuing", item.key, err.Error())
 		}
 
-		c.workqueue.Forget(objectWithEvent)
-		logger.V(4).Info("Synced", "key", key)
+		c.workqueue.Forget(item)
+		logger.V(4).Info("Synced", "key", item.key)
 
 		return nil
-	}(objectWithEvent)
+	}(item)
 	if err != nil {
 		logger.Error(err, "error processing item")
 
@@ -392,7 +417,7 @@ func (c *Controller) processNextWorkItem(ctx context.Context) bool {
 	return true
 }
 
-func (c *Controller) syncHandler(ctx context.Context, key string, event string) error {
+func (c *Controller) syncHandler(ctx context.Context, key string, event string, uid types.UID) error {
 	logger := klog.FromContext(ctx)
 	logger.V(4).Info("Syncing", "key", key, "event", event)
 
@@ -409,8 +434,13 @@ func (c *Controller) syncHandler(ctx context.Context, key string, event string) 
 	}
 
 	if errors.IsNotFound(err) {
+		// The resource is already gone from the API server and the informer
+		// cache by the time delete events are processed, so its identity has
+		// to be reconstructed from what enqueue captured beforehand.
 		resource = &v1alpha1.ResourceMetricsMonitor{}
+		resource.SetNamespace(namespace)
 		resource.SetName(name)
+		resource.SetUID(uid)
 	}
 
 	return c.handleObject(ctx, resource, event)
