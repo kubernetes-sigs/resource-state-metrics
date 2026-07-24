@@ -1,0 +1,364 @@
+# Copyright 2026 The Kubernetes resource-state-metrics Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+valid:
+  - name: "Valid configuration with metrics"
+    shouldPass: true
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "deployments"
+              families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+                  metrics:
+                    - value: "1"
+                      labels:
+                        - name: "app_name"
+                          value: "deployment"
+  - name: "Valid configuration with starlark"
+    shouldPass: true
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "*"
+              version: "*"
+              kind: "*"
+              resource: "virtual-machines"
+              families:
+                - name: "kube_customresource_vm"
+                  help: "vm help"
+                  starlark:
+                    script: "def main(): pass"
+  - name: "Valid configuration with hyphenated resource name"
+    shouldPass: true
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "service-bindings"
+              families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+                  metrics:
+                    - value: "1"
+  - name: "Valid configuration core API group empty string"
+    shouldPass: true
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: ""
+              version: "v1"
+              kind: "Pod"
+              resource: "pods"
+              families:
+                - name: "kube_customresource_pod"
+                  help: "pod help"
+                  starlark:
+                    script: "def main(): pass"
+  - name: "Valid configuration starlark set and metrics explicitly empty"
+    shouldPass: true
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "deployments"
+              families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+                  metrics: []
+                  starlark:
+                    script: "def main(): pass"
+requiredFields:
+  - name: "Missing required spec fields"
+    shouldPass: false
+    manifest:
+      spec: {}
+    errorContains:
+      - "spec.configuration in body is required"
+  - name: "Missing required store fields"
+    shouldPass: false
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+                  metrics:
+                    - value: "1"
+    errorContains:
+      - "spec.configuration.stores[0].group in body is required"
+      - "spec.configuration.stores[0].version in body is required"
+      - "spec.configuration.stores[0].kind in body is required"
+      - "spec.configuration.stores[0].resource in body is required"
+patterns:
+  - name: "Invalid Prometheus label name (contains hyphen)"
+    shouldPass: false
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "deployments"
+              families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+                  metrics:
+                    - value: "1"
+                      labels:
+                        - name: "invalid-label-name"
+                          value: "foo"
+    errorContains:
+      - "labels[0].name in body should match '^[a-zA-Z_][a-zA-Z0-9_]*$'"
+  - name: "Invalid Prometheus label name (starts with number)"
+    shouldPass: false
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "deployments"
+              families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+                  metrics:
+                    - value: "1"
+                      labels:
+                        - name: "123invalid"
+                          value: "foo"
+    errorContains:
+      - "labels[0].name in body should match '^[a-zA-Z_][a-zA-Z0-9_]*$'"
+  - name: "Resource name contains uppercase letters (invalid)"
+    shouldPass: false
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "Deployments"
+              families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+                  metrics:
+                    - value: "1"
+    errorContains:
+      - "resource in body should match '^(\\*|[a-z0-9-]+)$'"
+  - name: "Resource name contains invalid special characters"
+    shouldPass: false
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "deployments_invalid!"
+              families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+                  metrics:
+                    - value: "1"
+    errorContains:
+      - "resource in body should match '^(\\*|[a-z0-9-]+)$'"
+cel:
+  - name: "CEL validation: Both starlark and metrics configured"
+    shouldPass: false
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "deployments"
+              families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+                  metrics:
+                    - value: "1"
+                  starlark:
+                    script: "def main(): pass"
+    errorContains:
+      - "either starlark or metrics must be configured, but not both"
+  - name: "CEL validation: Neither starlark nor metrics configured"
+    shouldPass: false
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "deployments"
+              families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+    errorContains:
+      - "either starlark or metrics must be configured, but not both"
+  - name: "CEL validation: Metrics empty list and no starlark"
+    shouldPass: false
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "deployments"
+              families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+                  metrics: []
+    errorContains:
+      - "either starlark or metrics must be configured, but not both"
+  - name: "Starlark configuration with empty script"
+    shouldPass: false
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "deployments"
+              families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+                  starlark:
+                    script: ""
+    errorContains:
+      - "starlark.script in body should be at least 1 chars long"
+  - name: "Starlark configuration with missing script"
+    shouldPass: false
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "deployments"
+              families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+                  starlark: {}
+    errorContains:
+      - "starlark.script in body is required"
+duplicates:
+  - name: "Duplicate family names in families list"
+    shouldPass: false
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "deployments"
+              families:
+                - name: "kube_customresource_dup"
+                  help: "help 1"
+                  metrics:
+                    - value: "1"
+                - name: "kube_customresource_dup"
+                  help: "help 2"
+                  metrics:
+                    - value: "2"
+    errorContains:
+      - 'Duplicate value: {"name":"kube_customresource_dup"}'
+  - name: "Duplicate labels in metric labels list"
+    shouldPass: false
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "deployments"
+              families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+                  metrics:
+                    - value: "1"
+                      labels:
+                        - name: "dup_label"
+                          value: "val1"
+                        - name: "dup_label"
+                          value: "val2"
+    errorContains:
+      - 'Duplicate value: {"name":"dup_label"}'
+  - name: "Duplicate labels in family labels list"
+    shouldPass: false
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "deployments"
+              families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+                  metrics:
+                    - value: "1"
+                  labels:
+                    - name: "dup_label"
+                      value: "val1"
+                    - name: "dup_label"
+                      value: "val2"
+    errorContains:
+      - 'Duplicate value: {"name":"dup_label"}'
+  - name: "Duplicate labels in store labels list"
+    shouldPass: false
+    manifest:
+      spec:
+        configuration:
+          stores:
+            - group: "apps"
+              version: "v1"
+              kind: "Deployment"
+              resource: "deployments"
+              labels:
+                - name: "dup_label"
+                  value: "val1"
+                - name: "dup_label"
+                  value: "val2"
+              families:
+                - name: "kube_customresource_test"
+                  help: "test help"
+                  metrics:
+                    - value: "1"
+    errorContains:
+      - 'Duplicate value: {"name":"dup_label"}'

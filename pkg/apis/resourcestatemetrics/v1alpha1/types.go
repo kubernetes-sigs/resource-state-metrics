@@ -104,6 +104,7 @@ type Label struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern="^[a-zA-Z_][a-zA-Z0-9_]*$"
 	Name string `json:"name"`
 
 	// Value is the expression to evaluate for this label's value.
@@ -148,11 +149,14 @@ type StarlarkConfig struct {
 // Metric represents a single time series within a family.
 type Metric struct {
 	// Labels defines the label set for this metric.
+	// +listType=map
+	// +listMapKey=name
 	// +optional
 	Labels []Label `json:"labels,omitempty"`
 
 	// Value is the expression to evaluate for the metric value.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
 	Value string `json:"value"`
 
 	// Resolver overrides the family/store resolver for this metric.
@@ -161,6 +165,17 @@ type Metric struct {
 }
 
 // Family represents a metric family (a group of metrics with the same name).
+//
+// NOTE on CEL rule:
+// In Kubernetes OpenAPI v3, `metrics` is a slice. If `metrics` is omitted, `has(self.metrics)` may evaluate to false.
+// If the user explicitly sets `metrics: []` (empty list), `has(self.metrics)` will evaluate to true but its size will be 0.
+// Therefore, the CEL rule checks `!has(self.metrics) || size(self.metrics) == 0` for the starlark case,
+// and `has(self.metrics) && size(self.metrics) > 0` for the metrics case.
+// Do not "simplify" this rule (e.g. removing `!has` or `size` checks) as it ensures correct validation of omitted vs. empty lists.
+//
+// +kubebuilder:validation:XValidation:rule="has(self.starlark) ? !has(self.metrics) || size(self.metrics) == 0 : (has(self.metrics) && size(self.metrics) > 0)",message="either starlark or metrics must be configured, but not both"
+//
+//nolint:lll
 type Family struct {
 	// Name is the metric family name (will be prefixed with kube_customresource_).
 	// +kubebuilder:validation:Required
@@ -190,6 +205,8 @@ type Family struct {
 	Resolver ResolverType `json:"resolver,omitempty"`
 
 	// Labels defines additional labels to apply to all metrics in this family.
+	// +listType=map
+	// +listMapKey=name
 	// +optional
 	Labels []Label `json:"labels,omitempty"`
 
@@ -216,16 +233,27 @@ type Selectors struct {
 type Store struct {
 	// Group is the API group of the resource (empty string for core resources).
 	// Supports "*" to match all groups.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern="^(\\*|([a-z0-9]([-a-z0-9]*[a-z0-9])?\\.)*[a-z0-9]([-a-z0-9]*[a-z0-9])?|)$"
 	Group string `json:"group"`
 
 	// Version is the API version of the resource. Supports "*" to match all versions.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern="^(\\*|[a-zA-Z0-9]+)$"
 	Version string `json:"version"`
 
 	// Kind is the kind of the resource.
 	// Supports "*" to match all kinds within the specified group/version.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern="^(\\*|[a-zA-Z0-9]+)$"
 	Kind string `json:"kind"`
 
 	// Resource is the plural resource name (e.g. "deployments", "pods").
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern="^(\\*|[a-z0-9-]+)$"
 	Resource string `json:"resource"`
 
 	// Selectors defines how to filter the resources to watch.
@@ -233,6 +261,8 @@ type Store struct {
 	Selectors Selectors `json:"selectors,omitempty"`
 
 	// Families defines the metric families to generate for this resource.
+	// +listType=map
+	// +listMapKey=name
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
 	Families []Family `json:"families"`
@@ -243,6 +273,8 @@ type Store struct {
 	Resolver ResolverType `json:"resolver,omitempty"`
 
 	// Labels defines additional labels to apply to all metrics in this store.
+	// +listType=map
+	// +listMapKey=name
 	// +optional
 	Labels []Label `json:"labels,omitempty"`
 
