@@ -29,6 +29,7 @@ For more details, take a look at the [Makefile](Makefile) targets.
 - Non-turning-complete languages cannot express all possible metrics. For such cases, consider using a collector (`/external`). Such metrics are exposed through the `/external` endpoint of the "main" instance and defined in [`./external`](./external).
 - The managed resource, `ResourceMetricsMonitor` is namespace-scoped, but, to keep in accordance with KubeStateMetrics' `CustomResourceState`, which allows for collecting metrics from cluster-wide resources, it is possible to omit the `field` and `label` selectors to achieve that result.
 - [`client_python`](https://github.com/prometheus/client_python/blob/8673912276bdca7ddbca5d163eb11422b546bffb/prometheus_client/metrics.py)'s OpenMetrics implementation is the single source of truth upon which the various metric type implementations here are based on and tested against.
+- HTTP response compression: The main scrape endpoints (`/metrics` and `/external`) support `gzip` HTTP response compression per RFC 9110. When the client sends an `Accept-Encoding: gzip` header, responses are gzip-compressed and served with `Content-Encoding: gzip` and `Vary: Accept-Encoding`. If `gzip` is omitted or not supported by the client, uncompressed responses are returned. Note that while response compression significantly reduces network egress and payload size at scale, it incurs minor CPU compression overhead per scrape.
 
 ## TODO
 
