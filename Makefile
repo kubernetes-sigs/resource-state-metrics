@@ -37,10 +37,9 @@ PROJECT_NAME = resource-state-metrics
 REGISTRY ?= us-central1-docker.pkg.dev/k8s-staging-images/resource-state-metrics
 TAG ?= $(BUILD_TAG)
 V ?= 4
-VALE ?= vale
+
 VALE_ARCH ?= $(if $(filter $(shell uname -m),arm64),macOS_arm64,Linux_64-bit)
 VALE_STYLES_DIR ?= /tmp/.vale/styles
-VALE_VERSION ?= 3.1.0
 YAML_FILES = $(shell find . -type d -name vendor -prune -o -type d -name $(patsubst %/,%,$(patsubst ./%,%,$(ASSETS_DIR))) -prune -o \( -name "*.yaml" -o -name "*.yml" \) -print | grep -v "^./vendor" | grep -v "^./$(ASSETS_DIR)")
 
 ##@ Dependencies
@@ -66,6 +65,7 @@ DEEPCOPY_GEN ?= $(LOCALBIN)/deepcopy-gen
 CLIENT_GEN ?= $(LOCALBIN)/client-gen
 LISTER_GEN ?= $(LOCALBIN)/lister-gen
 INFORMER_GEN ?= $(LOCALBIN)/informer-gen
+VALE ?= $(LOCALBIN)/vale
 
 ## Tool Versions
 CHECKMAKE_VERSION ?= v0.3.2
@@ -78,8 +78,7 @@ YAMLFMT_VERSION ?= v0.16.0
 GOLANGCI_LINT_VERSION ?= v2.10.1
 CONTROLLER_GEN_VERSION ?= v0.16.5
 CODE_GENERATOR_VERSION ?= v0.36.2
-
-
+VALE_VERSION ?= 3.1.0
 
 BRANCH = $(shell git rev-parse --abbrev-ref HEAD)
 BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
@@ -104,12 +103,6 @@ all: lint $(PROJECT_NAME)
 
 .PHONY: setup
 setup:
-	# Setup vale.
-	@if [ ! -f $(ASSETS_DIR)/$(VALE) ]; then wget https://github.com/errata-ai/vale/releases/download/v$(VALE_VERSION)/vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz && \
-    mkdir -p assets && tar -xvzf vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz -C $(ASSETS_DIR) && \
-    rm vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz && \
-    chmod +x $(ASSETS_DIR)/$(VALE); \
-	fi
 	# Setup pre-commit hooks.
 	@$(PIPX) install pre-commit >/dev/null || \
 		(printf "pipx is required to install pre-commit. Please install pipx, or an alternate pip package, for e.g., pip3, and run 'make setup' (with PIPX in the latter case, where pipx is not used) again.\n" && exit 1)
@@ -188,6 +181,16 @@ informer-gen: $(INFORMER_GEN) ## Download informer-gen locally if necessary.
 $(INFORMER_GEN): $(LOCALBIN)
 	$(call go-install-tool,$(INFORMER_GEN),k8s.io/code-generator/cmd/informer-gen,$(CODE_GENERATOR_VERSION))
 
+.PHONY: vale
+vale: $(VALE) ## Download vale locally if necessary.
+$(VALE): $(LOCALBIN)
+	echo $(VALE)
+	@# Setup vale.
+	@if [ ! -f $(VALE) ]; then wget https://github.com/errata-ai/vale/releases/download/v$(VALE_VERSION)/vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz && \
+    tar -xvzf vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz -C $(LOCALBIN) && \
+    rm vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz && \
+    chmod +x $(VALE); \
+	fi
 
 ##############
 # Generating #
@@ -401,8 +404,8 @@ lint_yaml_fix: licensecheck_yaml_fix $(YAMLFMT)
 
 vale: .vale.ini $(MD_FILES)
 	@mkdir -p $(VALE_STYLES_DIR) && \
-	$(ASSETS_DIR)/$(VALE) sync && \
-	$(ASSETS_DIR)/$(VALE) $(MD_FILES)
+	$(VALE) sync && \
+	$(VALE) $(MD_FILES)
 
 .PHONY: lint_md
 lint_md: $(MARKDOWNFMT) $(MD_FILES)
