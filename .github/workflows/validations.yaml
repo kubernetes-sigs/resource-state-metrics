@@ -57,7 +57,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Run linter
-        run: make lint
+        run: make setup-pre-commit lint
       - name: Lint commit (gitlint)
         if: github.event_name == 'pull_request'
         run: |
