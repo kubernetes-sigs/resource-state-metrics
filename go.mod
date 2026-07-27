@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/KimMachineGun/automemlimit v0.7.0
-	github.com/google/cel-go v0.29.2
+	github.com/google/cel-go v0.30.0
 	github.com/google/go-cmp v0.7.0
 	github.com/iancoleman/strcase v0.3.0
 	github.com/prometheus/client_golang v1.24.0
