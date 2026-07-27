@@ -12,11 +12,11 @@ require (
 	go.starlark.net v0.0.0-20260210143700-b62fd896b91b
 	golang.org/x/text v0.40.0
 	golang.org/x/time v0.15.0
-	k8s.io/api v0.36.2
-	k8s.io/apiextensions-apiserver v0.36.2
-	k8s.io/apimachinery v0.36.2
-	k8s.io/client-go v0.36.2
-	k8s.io/code-generator v0.36.2
+	k8s.io/api v0.36.3
+	k8s.io/apiextensions-apiserver v0.36.3
+	k8s.io/apimachinery v0.36.3
+	k8s.io/client-go v0.36.3
+	k8s.io/code-generator v0.36.3
 	k8s.io/klog/v2 v2.140.0
 	k8s.io/kube-state-metrics/v2 v2.15.0
 	sigs.k8s.io/yaml v1.6.0
