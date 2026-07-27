@@ -29,10 +29,6 @@ JSONNET_MANIFESTS_DIR ?= jsonnet/manifests
 KUBECTL ?= kubectl
 LOCAL_NAMESPACE ?= default
 MAIN_METRICS_PORT ?= 9999
-MARKDOWNFMT ?= $(GOBIN)/markdownfmt
-MARKDOWNFMT_VERSION ?= v3.1.0
-MDTOC ?= $(GOBIN)/mdtoc
-MDTOC_VERSION ?= v1.4.0
 MD_FILES = $(shell find . \( -type d -name 'vendor' -o -type d -name $(patsubst %/,%,$(patsubst ./%,%,$(ASSETS_DIR))) \) -prune -o -type f -name "*.md" -print)
 PIPX ?= pipx
 PPROF_OPTIONS ?=
@@ -47,6 +43,12 @@ V ?= 4
 VALE_ARCH ?= $(if $(filter $(shell uname -m),arm64),macOS_arm64,Linux_64-bit)
 VALE_STYLES_DIR ?= /tmp/.vale/styles
 YAML_FILES = $(shell find . -type d -name vendor -prune -o -type d -name $(patsubst %/,%,$(patsubst ./%,%,$(ASSETS_DIR))) -prune -o \( -name "*.yaml" -o -name "*.yml" \) -print | grep -v "^./vendor" | grep -v "^./$(ASSETS_DIR)")
+
+##@ General
+
+.PHONY: help
+help: ## Display this help.
+	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
 ##@ Dependencies
 
@@ -72,6 +74,7 @@ CLIENT_GEN ?= $(LOCALBIN)/client-gen
 LISTER_GEN ?= $(LOCALBIN)/lister-gen
 INFORMER_GEN ?= $(LOCALBIN)/informer-gen
 VALE ?= $(LOCALBIN)/vale
+MDTOC ?= $(LOCALBIN)/mdtoc
 
 ## Tool Versions
 CHECKMAKE_VERSION ?= v0.3.2
@@ -85,6 +88,7 @@ GOLANGCI_LINT_VERSION ?= v2.10.1
 CONTROLLER_GEN_VERSION ?= v0.16.5
 CODE_GENERATOR_VERSION ?= v0.36.2
 VALE_VERSION ?= 3.1.0
+MDTOC_VERSION ?= v1.4.0
 
 BRANCH = $(shell git rev-parse --abbrev-ref HEAD)
 BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
@@ -103,12 +107,8 @@ LDFLAGS ?= -s -w \
 .PHONY: all
 all: lint $(PROJECT_NAME)
 
-#########
-# Setup #
-#########
-
-.PHONY: setup
-setup:
+.PHONY: setup-pre-commit
+setup-pre-commit: ## Setup pre-commit hooks and commit message template.
 	# Setup pre-commit hooks.
 	@$(PIPX) install pre-commit >/dev/null || \
 		(printf "pipx is required to install pre-commit. Please install pipx, or an alternate pip package, for e.g., pip3, and run 'make setup' (with PIPX in the latter case, where pipx is not used) again.\n" && exit 1)
@@ -187,6 +187,11 @@ informer-gen: $(INFORMER_GEN) ## Download informer-gen locally if necessary.
 $(INFORMER_GEN): $(LOCALBIN)
 	$(call go-install-tool,$(INFORMER_GEN),k8s.io/code-generator/cmd/informer-gen,$(CODE_GENERATOR_VERSION))
 
+.PHONY: mdtoc
+mdtoc: $(MDTOC) ## Download mdtoc locally if necessary.
+$(MDTOC): $(LOCALBIN)
+	$(call go-install-tool,$(MDTOC),sigs.k8s.io/mdtoc,$(MDTOC_VERSION))
+
 .PHONY: vale
 vale: $(VALE) ## Download vale locally if necessary.
 $(VALE): $(LOCALBIN)
@@ -198,12 +203,10 @@ $(VALE): $(LOCALBIN)
     chmod +x $(VALE); \
 	fi
 
-##############
-# Generating #
-##############
+##@ Generating
 
 .PHONY: manifests
-manifests: $(CONTROLLER_GEN)
+manifests: $(CONTROLLER_GEN) ## Generate manifests e.g. CRD, RBAC etc.
 	@$(CONTROLLER_GEN) \
 	rbac:headerFile=$(BOILERPLATE_YAML_COMPLIANT),roleName=$(PROJECT_NAME) crd:headerFile=$(BOILERPLATE_YAML_COMPLIANT) paths=./$(CONTROLLER_GEN_APIS_DIR)/... \
 	output:rbac:artifacts:config=$(CONTROLLER_GEN_OUT_DIR) output:crd:dir=$(CONTROLLER_GEN_OUT_DIR) && \
@@ -249,15 +252,17 @@ codegen: $(DEEPCOPY_GEN) $(CLIENT_GEN) $(LISTER_GEN) $(INFORMER_GEN) ## Generate
 	$(PKG)/pkg/apis/resourcestatemetrics/v1alpha1
 
 .PHONY: jsonnet_manifests
-jsonnet_manifests: $(JSONNET) $(GOJSONTOYAML) $(YQ) manifests
+jsonnet_manifests: $(JSONNET) $(GOJSONTOYAML) $(YQ) manifests ## Generate manifests from jsonnet files.
 	@CONTROLLER_GEN_VERSION=$(CONTROLLER_GEN_VERSION) VERSION=$(VERSION) NAMESPACE=$(LOCAL_NAMESPACE) PROJECT_NAME=$(PROJECT_NAME) JSONNET=$(JSONNET) GOJSONTOYAML=$(GOJSONTOYAML) YQ=$(YQ) ./hack/generate-yamls-from-jsonnets.sh
 
-.PHONY: generate
-generate: manifests codegen jsonnet_manifests
+.PHONY: table_of_contents
+table_of_contents: $(MDTOC) $(PROPOSAL_FILES) ## Generate table of contents Markdown files.
+	@$(MDTOC) --inplace --max-depth=5 $(PROPOSAL_FILES)
 
-#############
-# Verifying #
-#############
+.PHONY: generate
+generate: manifests codegen jsonnet_manifests table_of_contents ## Run all code generation targets.
+
+##@ Verifying
 
 .PHONY: verify_codegen
 verify_codegen: codegen ## Verify go generated files are up to date
@@ -267,31 +272,34 @@ verify_codegen: codegen ## Verify go generated files are up to date
 	fi
 
 .PHONY: verify_manifests
-verify_manifests: jsonnet_manifests
+verify_manifests: jsonnet_manifests ## Verify manifests generated from jsonnet files are up to date
 	@(git diff --exit-code $(JSONNET_MANIFESTS_DIR) manifests/ && echo "Manifests are up to date.") || (echo "Manifests are not up to date. Please run 'make jsonnet_manifests' to update them." && exit 1)
 
+.PHONY: verify_toc
+verify_toc: $(MDTOC) $(PROPOSAL_FILES) ## Verify that tables of contents are up to date
+	@$(MDTOC) --inplace --max-depth=5 --dryrun $(PROPOSAL_FILES) || \
+		(echo "Proposal tables of contents are out of date. Run 'make proposals_toc' to fix." && exit 1)
+
 .PHONY: verify_generated
-verify_generated: verify_codegen verify_manifests
+verify_generated: verify_codegen verify_manifests verify_toc ## Verify all generated files are up to date
 
 .PHONY: verify
-verify: lint test verify_generated
+verify: lint test verify_generated ## Run all verification targets.
 
-############
-# Building #
-############
+##@ Build
 
 .PHONY: image
-image: $(PROJECT_NAME)
+image: $(PROJECT_NAME) ## Build docker image for the project.
 	@docker build -t $(PROJECT_NAME):$(BUILD_TAG) .
 
 $(PROJECT_NAME): $(GO_FILES)
 	$(GO) build -a -installsuffix cgo -ldflags "$(LDFLAGS)" -gcflags "$(GCFLAGS)" -o $@
 
 .PHONY: build
-build: $(PROJECT_NAME)
+build: $(PROJECT_NAME) ## Build the project binary
 
 .PHONY: image-push
-image-push:
+image-push: image ## Push docker image to the registry.
 	$(DOCKER_BUILDX_CMD) build --pull --push \
 		--platform $(subst $(eval ) ,$(comma),$(addprefix linux/,$(ALL_ARCH))) \
 		-t $(REGISTRY)/$(PROJECT_NAME):$(TAG) .
@@ -305,13 +313,13 @@ load: image
 	@kind load docker-image $(PROJECT_NAME):$(BUILD_TAG)
 
 .PHONY: apply
-apply: manifests delete
+apply: manifests delete ## Apply manifests to the cluster.
 	# Applying manifests
 	@$(KUBECTL) apply -f manifests
 	# Applied manifests
 
 .PHONY: delete
-delete:
+delete: ## Delete manifests from the cluster.
 	# Deleting manifests
 	@$(KUBECTL) delete --ignore-not-found -f manifests/
 	# Deleted manifests
@@ -321,16 +329,14 @@ local: apply $(PROJECT_NAME)
 	@$(KUBECTL) scale deployment $(PROJECT_NAME) --replicas=0 -n $(LOCAL_NAMESPACE) 2>/dev/null || true
 	@./$(PROJECT_NAME) -v=$(V) -kubeconfig $(KUBECONFIG)
 
-###########
-# Testing #
-###########
+##@ Testing
 
 .PHONY: pprof
-pprof:
+pprof: ## Run pprof for the project.
 	@go tool pprof ":$(PPROF_PORT)" $(PPROF_OPTIONS)
 
 .PHONY: test_unit
-test_unit:
+test_unit: ## Run unit tests.
 	@$(GO) test -v -race $(shell go list ./... | \
 		grep -v "/generated" | \
 		grep -v "/signals" | \
@@ -338,14 +344,14 @@ test_unit:
 		grep -v "/version")
 
 .PHONY: test_e2e
-test_e2e:
+test_e2e: ## Run e2e tests.
 	@$(GO) test -v -race ./tests/...
 
 .PHONY: test
-test: test_unit test_e2e
+test: test_unit test_e2e ## Run all tests.
 
 .PHONY: apply_testdata
-apply_testdata: $(YQ) delete_testdata
+apply_testdata: $(YQ) delete_testdata ### Apply testdata to the cluster.
 	# Applying testdata
 	@$(KUBECTL) apply -R -f tests/manifests/custom-resource-definition
 	@$(KUBECTL) apply -R -f tests/manifests/custom-resource
@@ -353,7 +359,7 @@ apply_testdata: $(YQ) delete_testdata
 	# Applied testdata
 
 .PHONY: delete_testdata
-delete_testdata:
+delete_testdata: ## Delete testdata from the cluster.
 	# Deleting testdata
 	-@$(KUBECTL) delete --ignore-not-found -R -f tests/manifests
 	# Deleted testdata
@@ -363,119 +369,89 @@ golden_metrics: $(YQ) $(GOLDEN_FILES)
 	@$(YQ) --no-doc '.out.metrics[]' $(GOLDEN_FILES) > $(GOLDEN_METRICS_FILE)
 
 .PHONY: compare_metrics
-compare_metrics: golden_metrics
+compare_metrics: golden_metrics ## Compare metrics from the running project with the golden metrics.
 	@diff \
 		<(sort $(GOLDEN_METRICS_FILE)) \
 		<(curl -sf http://localhost:$(MAIN_METRICS_PORT)/metrics | grep -Ff $(GOLDEN_METRICS_FILE) | sort)
 
-###########
-# Linting #
-###########
+##@ Linting
 
 .PHONY: lint
-lint: lint_makefile lint_yaml lint_md lint_go lint_jsonnet
+lint: lint_makefile lint_yaml lint_md lint_go lint_jsonnet ## Run all linters.
 
 .PHONY: lint_fix
-lint_fix: lint_makefile lint_yaml_fix lint_md_fix lint_go_fix lint_jsonnet_fix
-
-#####################
-# Linting: Makefile #
-#####################
+lint_fix: lint_makefile lint_yaml_fix lint_md_fix lint_go_fix lint_jsonnet_fix ## Run all linters and fix issues where possible.
 
 .PHONY: lint_makefile
-lint_makefile: $(CHECKMAKE)
+lint_makefile: $(CHECKMAKE) ## Lint Makefile.
 	@$(CHECKMAKE) Makefile
 
-#################
-# Linting: YAML #
-#################
-
-licensecheck_yaml: $(YAML_FILES)
+.PHONY: licensecheck_yaml
+licensecheck_yaml: $(YAML_FILES) ## Check license headers in YAML files.
 	@./hack/fix-license-headers.sh --check $(YAML_FILES)
 
-licensecheck_yaml_fix: $(YAML_FILES)
+.PHONY: licensecheck_yaml_fix
+licensecheck_yaml_fix: $(YAML_FILES) ## Fix license headers in YAML files.
 	@./hack/fix-license-headers.sh $(YAML_FILES)
 
 .PHONY: lint_yaml
-lint_yaml: licensecheck_yaml $(YAMLFMT)
+lint_yaml: licensecheck_yaml $(YAMLFMT) ## Lint YAML files.
 	@$(YAMLFMT) -dry -quiet . || (echo "YAML files need formatting. Run 'make yamlfmt_fix' to fix." && exit 1)
 
 .PHONY: lint_yaml_fix
-lint_yaml_fix: licensecheck_yaml_fix $(YAMLFMT)
+lint_yaml_fix: licensecheck_yaml_fix $(YAMLFMT) ## Lint and fix YAML files.
 	@$(YAMLFMT) .
 
-#####################
-# Linting: Markdown #
-#####################
-
-vale: .vale.ini $(MD_FILES)
+.PHONY: lint_md
+lint_md: .vale.ini $(MD_FILES) ## Lint Markdown files with Vale.
 	@mkdir -p $(VALE_STYLES_DIR) && \
 	$(VALE) sync && \
 	$(VALE) $(MD_FILES)
 
-.PHONY: markdown_format
-markdown_format: $(MARKDOWNFMT) $(MD_FILES)
+.PHONY: format_md
+format_md: $(MARKDOWNFMT) $(MD_FILES) ## Format Markdown files with markdownfmt.
 	@test -z "$(shell $(MARKDOWNFMT) -l $(MD_FILES))" || (echo "The following files need to be formatted with 'markdownfmt -w -gofmt':" $(shell $(MARKDOWNFMT) -l $(MD_FILES)) "" && exit 1)
 
-markdown_format_fix: $(MD_FILES)
+.PHONY: format_md_fix
+format_md_fix: vale markdown_format_fix proposals_toc ## Format Markdown files with markdownfmt and fix issues
 	@for file in $(MD_FILES); do $(MARKDOWNFMT) -w -gofmt $$file || exit 1; done
 
-proposals_toc: $(PROPOSAL_FILES)
-	@$(MDTOC) --inplace --max-depth=5 $(PROPOSAL_FILES)
-
-proposals_toc_check: $(PROPOSAL_FILES)
-	@$(MDTOC) --inplace --max-depth=5 --dryrun $(PROPOSAL_FILES) || \
-		(echo "Proposal tables of contents are out of date. Run 'make proposals_toc' to fix." && exit 1)
-
-.PHONY: lint_md
-lint_md: vale markdown_format proposals_toc_check
-
-.PHONY: lint_md_fix
-lint_md_fix: vale markdown_format_fix proposals_toc
-	@for file in $(MD_FILES); do $(MARKDOWNFMT) -w -gofmt $$file || exit 1; done
-
-###############
-# Linting: Go #
-###############
-
-licensecheck_go: $(GO_FILES)
+.PHONY: licensecheck_go
+licensecheck_go: $(GO_FILES) ## Check license headers in Go files.
 	@./hack/fix-license-headers.sh --check $(GO_FILES)
 
-licensecheck_go_fix: $(GO_FILES)
+.PHONY: licensecheck_go_fix
+licensecheck_go_fix: $(GO_FILES) ## Fix license headers in Go files.
 	@./hack/fix-license-headers.sh $(GO_FILES)
 
 .PHONY: lint_go
-lint_go: licensecheck_go $(GOLANGCI_LINT)
+lint_go: licensecheck_go $(GOLANGCI_LINT) ## Lint Go files.
 	@$(GOLANGCI_LINT) run -c $(GOLANGCI_LINT_CONFIG)
 
 .PHONY: lint_go_fix
-lint_go_fix: licensecheck_go_fix $(GOLANGCI_LINT)
+lint_go_fix: licensecheck_go_fix $(GOLANGCI_LINT) ## Lint and fix Go files.
 	@$(GOLANGCI_LINT) run --fix -c $(GOLANGCI_LINT_CONFIG)
 
-####################
-# Linting: Jsonnet #
-####################
-
-licensecheck_jsonnet: $(JSONNET_FILES)
+.PHONY: licensecheck_jsonnet
+licensecheck_jsonnet: $(JSONNET_FILES) ## Check license headers in Jsonnet files.
 	@./hack/fix-license-headers.sh --check $(JSONNET_FILES)
 
-licensecheck_jsonnet_fix: $(JSONNET_FILES)
+.PHONY: licensecheck_jsonnet_fix
+licensecheck_jsonnet_fix: $(JSONNET_FILES) ## Fix license headers in Jsonnet files.
 	@./hack/fix-license-headers.sh $(JSONNET_FILES)
 
 .PHONY: lint_jsonnet
-lint_jsonnet: $(JSONNETFMT) licensecheck_jsonnet
+lint_jsonnet: $(JSONNETFMT) licensecheck_jsonnet ## Lint Jsonnet files.
 	@test -z "$(shell $(JSONNETFMT) --test $(JSONNET_FILES) 2>&1)" || (echo "The following jsonnet files need to be formatted with 'jsonnetfmt -i':" && $(JSONNETFMT) --test $(JSONNET_FILES) && exit 1)
 
 .PHONY: lint_jsonnet_fix
-lint_jsonnet_fix: $(JSONNETFMT) licensecheck_jsonnet_fix
+lint_jsonnet_fix: $(JSONNETFMT) licensecheck_jsonnet_fix ## Lint and fix Jsonnet files.
 	@$(JSONNETFMT) -i $(JSONNET_FILES)
 
-###########
-# Cleanup #
-###########
+##@ Cleanup
 
 .PHONY: clean
-clean:
+clean: ## Clean up git untracked files and directories.
 	@git clean -fxd
 
 
