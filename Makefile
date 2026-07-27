@@ -105,11 +105,9 @@ all: lint $(PROJECT_NAME)
 
 .PHONY: setup-pre-commit
 setup-pre-commit: ## Setup pre-commit hooks and commit message template.
-	# Setup pre-commit hooks.
 	@$(PIPX) install pre-commit >/dev/null || \
-		(printf "pipx is required to install pre-commit. Please install pipx, or an alternate pip package, for e.g., pip3, and run 'make setup' (with PIPX in the latter case, where pipx is not used) again.\n" && exit 1)
+		(printf "pipx is required to install pre-commit. Please install pipx, or an alternate pip package, for e.g., pip3, and run 'make setup-pre-commit' (with PIPX in the latter case, where pipx is not used) again.\n" && exit 1)
 	@pre-commit install --hook-type commit-msg >/dev/null
-	# Setup commit message template.
 	@# --always-make: Ensure .gitmessage is always updated at setup.
 	@$(MAKE) --always-make --no-print-directory -s .gitmessage
 	@git config commit.template .gitmessage
