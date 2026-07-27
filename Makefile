@@ -29,7 +29,7 @@ JSONNET_MANIFESTS_DIR ?= jsonnet/manifests
 KUBECTL ?= kubectl
 LOCAL_NAMESPACE ?= default
 MAIN_METRICS_PORT ?= 9999
-MD_FILES = $(shell find . \( -type d -name 'vendor' -o -type d -name $(patsubst %/,%,$(patsubst ./%,%,$(ASSETS_DIR))) \) -prune -o -type f -name "*.md" -print)
+MD_FILES = $(shell find . \( -type d -name 'vendor' -o -type d -name 'bin' -o -type d -name $(patsubst %/,%,$(patsubst ./%,%,$(ASSETS_DIR))) \) -prune -o -type f -name "*.md" -print)
 PIPX ?= pipx
 PPROF_OPTIONS ?=
 PPROF_PORT ?= 9998
@@ -184,7 +184,6 @@ $(INFORMER_GEN): $(LOCALBIN)
 .PHONY: vale
 vale: $(VALE) ## Download vale locally if necessary.
 $(VALE): $(LOCALBIN)
-	echo $(VALE)
 	@# Setup vale.
 	@if [ ! -f $(VALE) ]; then wget https://github.com/errata-ai/vale/releases/download/v$(VALE_VERSION)/vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz && \
     tar -xvzf vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz -C $(LOCALBIN) && \
@@ -383,7 +382,7 @@ lint_yaml_fix: licensecheck_yaml_fix $(YAMLFMT) ## Lint and fix YAML files.
 	@$(YAMLFMT) .
 
 .PHONY: lint_md
-lint_md: .vale.ini $(MD_FILES) ## Lint Markdown files with Vale.
+lint_md: $(VALE) .vale.ini $(MD_FILES) ## Lint Markdown files with Vale.
 	@mkdir -p $(VALE_STYLES_DIR) && \
 	$(VALE) sync && \
 	$(VALE) $(MD_FILES)
