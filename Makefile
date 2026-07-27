@@ -14,10 +14,10 @@ BOILERPLATE_GO_COMPLIANT ?= hack/boilerplate.go.txt
 BOILERPLATE_YAML_COMPLIANT ?= hack/boilerplate.yaml.txt
 BUILD_TAG ?= $(shell git describe --tags --exact-match 2>/dev/null || echo "latest")
 
-CODE_GENERATOR_VERSION ?= v0.32.3
 COMMON = github.com/prometheus/common
 CONTROLLER_GEN_APIS_DIR ?= pkg/apis
 CONTROLLER_GEN_OUT_DIR ?= /tmp/resource-state-metrics/controller-gen
+PKG = github.com/kubernetes-sigs/resource-state-metrics
 CREATED_AT_EPOCH ?=
 GO ?= go
 GOLANGCI_LINT_CONFIG ?= .golangci.yaml
@@ -45,8 +45,10 @@ YAML_FILES = $(shell find . -type d -name vendor -prune -o -type d -name $(patsu
 
 ##@ Dependencies
 
+PWD := $(shell pwd)
+
 ## Location to install dependencies to
-LOCALBIN ?= $(shell pwd)/bin
+LOCALBIN ?= $(PWD)/bin
 $(LOCALBIN):
 	mkdir -p $(LOCALBIN)
 
@@ -60,6 +62,10 @@ MARKDOWNFMT ?= $(LOCALBIN)/markdownfmt
 YAMLFMT ?= $(LOCALBIN)/yamlfmt
 GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
+DEEPCOPY_GEN ?= $(LOCALBIN)/deepcopy-gen
+CLIENT_GEN ?= $(LOCALBIN)/client-gen
+LISTER_GEN ?= $(LOCALBIN)/lister-gen
+INFORMER_GEN ?= $(LOCALBIN)/informer-gen
 
 ## Tool Versions
 CHECKMAKE_VERSION ?= v0.3.2
@@ -71,6 +77,7 @@ MARKDOWNFMT_VERSION ?= v3.1.0
 YAMLFMT_VERSION ?= v0.16.0
 GOLANGCI_LINT_VERSION ?= v2.10.1
 CONTROLLER_GEN_VERSION ?= v0.16.5
+CODE_GENERATOR_VERSION ?= v0.36.2
 
 
 
@@ -103,8 +110,6 @@ setup:
     rm vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz && \
     chmod +x $(ASSETS_DIR)/$(VALE); \
 	fi
-	# Setup code-generator.
-	@$(GO) install k8s.io/code-generator/cmd/...@$(CODE_GENERATOR_VERSION)
 	# Setup pre-commit hooks.
 	@$(PIPX) install pre-commit >/dev/null || \
 		(printf "pipx is required to install pre-commit. Please install pipx, or an alternate pip package, for e.g., pip3, and run 'make setup' (with PIPX in the latter case, where pipx is not used) again.\n" && exit 1)
@@ -163,6 +168,27 @@ controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessar
 $(CONTROLLER_GEN): $(LOCALBIN)
 	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_GEN_VERSION))
 
+.PHONY: deepcopy-gen
+deepcopy-gen: $(DEEPCOPY_GEN) ## Download deepcopy-gen locally if necessary.
+$(DEEPCOPY_GEN): $(LOCALBIN)
+	$(call go-install-tool,$(DEEPCOPY_GEN),k8s.io/code-generator/cmd/deepcopy-gen,$(CODE_GENERATOR_VERSION))
+
+.PHONY: client-gen
+client-gen: $(CLIENT_GEN) ## Download client-gen locally if necessary.
+$(CLIENT_GEN): $(LOCALBIN)
+	$(call go-install-tool,$(CLIENT_GEN),k8s.io/code-generator/cmd/client-gen,$(CODE_GENERATOR_VERSION))
+
+.PHONY: lister-gen
+lister-gen: $(LISTER_GEN) ## Download lister-gen locally if necessary.
+$(LISTER_GEN): $(LOCALBIN)
+	$(call go-install-tool,$(LISTER_GEN),k8s.io/code-generator/cmd/lister-gen,$(CODE_GENERATOR_VERSION))
+
+.PHONY: informer-gen
+informer-gen: $(INFORMER_GEN) ## Download informer-gen locally if necessary.
+$(INFORMER_GEN): $(LOCALBIN)
+	$(call go-install-tool,$(INFORMER_GEN),k8s.io/code-generator/cmd/informer-gen,$(CODE_GENERATOR_VERSION))
+
+
 ##############
 # Generating #
 ##############
@@ -176,9 +202,42 @@ manifests: $(CONTROLLER_GEN)
 	mv "$(CONTROLLER_GEN_OUT_DIR)/role.yaml" "manifests/cluster-role.yaml"
 
 .PHONY: codegen
-codegen:
-	@# Populate pkg/generated/.
-	@./hack/update-codegen.sh
+codegen: $(DEEPCOPY_GEN) $(CLIENT_GEN) $(LISTER_GEN) $(INFORMER_GEN) ## Generate deepcopy, clientset, listers, and informers for the API group.
+	@# Populate pkg/generated/deepcopy
+	$(DEEPCOPY_GEN) \
+	-v 0 \
+	--output-file zz_generated.deepcopy.go \
+	--go-header-file "$(PWD)/hack/boilerplate.go.txt" \
+	$(PKG)/pkg/apis/resourcestatemetrics/v1alpha1
+
+	@# Populate pkg/generated/clientset
+	$(CLIENT_GEN) \
+	-v 0 \
+	--go-header-file "$(PWD)/hack/boilerplate.go.txt" \
+	--output-dir $(PWD)/pkg/generated/clientset \
+	--output-pkg $(PKG)/pkg/generated/clientset \
+	--clientset-name versioned \
+	--apply-configuration-package '' \
+	--input-base $(PKG)/pkg/apis \
+	--input resourcestatemetrics/v1alpha1
+
+	@# Populate pkg/generated/listers
+	$(LISTER_GEN) \
+	-v 0 \
+	--go-header-file "$(PWD)/hack/boilerplate.go.txt" \
+	--output-dir $(PWD)/pkg/generated/listers \
+	--output-pkg $(PKG)/pkg/generated/listers \
+	$(PKG)/pkg/apis/resourcestatemetrics/v1alpha1
+
+	@# Populate pkg/generated/informers
+	$(INFORMER_GEN) \
+	-v 0 \
+	--go-header-file "$(PWD)/hack/boilerplate.go.txt" \
+	--output-dir $(PWD)/pkg/generated/informers \
+	--output-pkg $(PKG)/pkg/generated/informers \
+	--versioned-clientset-package $(PKG)/pkg/generated/clientset/versioned \
+	--listers-package $(PKG)/pkg/generated/listers \
+	$(PKG)/pkg/apis/resourcestatemetrics/v1alpha1
 
 .PHONY: jsonnet_manifests
 jsonnet_manifests: $(JSONNET) $(GOJSONTOYAML) $(YQ) manifests
@@ -192,8 +251,11 @@ generate: manifests codegen jsonnet_manifests
 #############
 
 .PHONY: verify_codegen
-verify_codegen:
-	@./hack/verify-codegen.sh || (echo "Generated code is not up to date. Please run 'make codegen' to update it." && exit 1)
+verify_codegen: codegen ## Verify go generated files are up to date
+	@if !(git diff --quiet HEAD pkg/generated); then \
+		git diff pkg/generated; \
+		echo "generated files are out of date, run make codegen"; exit 1; \
+	fi
 
 .PHONY: verify_manifests
 verify_manifests: jsonnet_manifests
