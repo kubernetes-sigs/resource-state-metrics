@@ -17,7 +17,6 @@ limitations under the License.
 package framework
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -25,9 +24,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/kubernetes-sigs/resource-state-metrics/internal"
@@ -35,27 +32,21 @@ import (
 	rsmclientset "github.com/kubernetes-sigs/resource-state-metrics/pkg/generated/clientset/versioned"
 	rsmfake "github.com/kubernetes-sigs/resource-state-metrics/pkg/generated/clientset/versioned/fake"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/options"
-	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/kubernetes-sigs/resource-state-metrics/tests/testutil"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	apiextensionsfake "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/fake"
 	apiextensionsinformers "k8s.io/apiextensions-apiserver/pkg/client/informers/externalversions"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
-	"k8s.io/client-go/discovery"
-	memorycache "k8s.io/client-go/discovery/cached/memory"
 	fakediscovery "k8s.io/client-go/discovery/fake"
-	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes"
 	kubefake "k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/yaml"
@@ -85,10 +76,8 @@ type Framework struct {
 	controller          *internal.Controller
 	crdInformer         cache.SharedIndexInformer
 	crdInformerFactory  apiextensionsinformers.SharedInformerFactory
-	dynamicClient       dynamic.Interface
+	dynamicClient       *dynamicfake.FakeDynamicClient
 	kubeClient          kubernetes.Interface
-	discoveryClient     discovery.DiscoveryInterface
-	restMapper          meta.RESTMapper
 	scheme              *runtime.Scheme
 	discoveryResources  []*metav1.APIResourceList
 }
@@ -136,54 +125,6 @@ func NewInforming(ctx context.Context, initialObjects ...runtime.Object) *Framew
 	return f
 }
 
-// NewForConfig creates a new test framework backed by real clients from a
-// rest.Config. This is intended for envtest-style tests where a real
-// kube-apiserver is available and CRDs are installed externally (e.g. via
-// envtest.Environment.CRDDirectoryPaths).
-//
-// Unlike NewInforming, no CRD informer is started; GVK-to-resource resolution
-// uses the discovery-backed REST mapper instead.
-//
-// Options are initialised with production defaults via options.Read().
-// The stringFlag helper in options.Read() prevents flag-redefinition panics
-// when controller-runtime has already registered kubeconfig/master flags.
-// Ports are left unset and allocated by Start().
-func NewForConfig(cfg *rest.Config) (*Framework, error) {
-	kubeClient, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
-	}
-
-	rsmClient, err := rsmclientset.NewForConfig(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create RSM client: %w", err)
-	}
-
-	dynClient, err := dynamic.NewForConfig(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
-	}
-
-	discoClient, err := discovery.NewDiscoveryClientForConfig(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create discovery client: %w", err)
-	}
-
-	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memorycache.NewMemCacheClient(discoClient))
-
-	opts := options.NewOptions(klog.Background())
-	opts.Read()
-
-	return &Framework{
-		Options:         opts,
-		RSMClient:       rsmClient,
-		kubeClient:      kubeClient,
-		dynamicClient:   dynClient,
-		discoveryClient: discoClient,
-		restMapper:      mapper,
-	}, nil
-}
-
 // AddToScheme adds types to the framework's scheme. Panics if any adder returns an error.
 func (f *Framework) AddToScheme(adder func(*runtime.Scheme)) *runtime.Scheme {
 	adder(f.scheme)
@@ -212,14 +153,16 @@ func (f *Framework) WithDiscoveryResources(resources []*metav1.APIResourceList) 
 	f.discoveryResources = resources
 }
 
-// Start starts the RSM controller with the framework's clients.
+// Start starts the RSM controller with the mock clients.
 // NOTE: This spawns a new Controller instance for each call to a newly
 // instantiated Framework. It is thus advised to review added code for
 // concurrent access, and enforced.
 func (f *Framework) Start(ctx context.Context, workers int) error {
-	// NewForConfig sets dynamicClient directly; NewInforming defers to WithDynamicClient.
-	if f.dynamicClient == nil {
+	switch {
+	case f.dynamicClient == nil:
 		panic("dynamic client is not initialized; call WithDynamicClient() to initialize it before starting the controller")
+	case len(f.scheme.AllKnownTypes()) == 0:
+		panic("scheme has no known types; call AddToScheme() to add types to the scheme before starting the controller")
 	}
 
 	// Check if controller is already running
@@ -227,57 +170,42 @@ func (f *Framework) Start(ctx context.Context, workers int) error {
 		return nil
 	}
 
-	// Initialise Options if not set by the constructor (NewInforming path).
-	if f.Options == nil {
-		f.Options = &options.Options{Workers: &workers}
-		f.Options.Read()
-	} else {
-		f.Options.Workers = &workers
-	}
+	f.Options = &options.Options{Workers: &workers}
+	f.Options.Read()
 
-	// Always allocate dynamic ports to avoid collisions between parallel tests.
-	mainPort, err := GetFreePort(ctx)
+	// Allocate free ports dynamically to avoid conflicts between tests
+	mainPort, err := testutil.GetFreePort(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to allocate main port: %w", err)
 	}
 
 	f.Options.MainPort = &mainPort
 
-	selfPort, err := GetFreePort(ctx)
+	selfPort, err := testutil.GetFreePort(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to allocate self port: %w", err)
 	}
 
 	f.Options.SelfPort = &selfPort
 
-	// Resolve a discovery client for the controller.
-	var disco discovery.DiscoveryInterface
-
-	if f.discoveryClient != nil {
-		// Real-client path (NewForConfig): use the pre-built discovery client.
-		disco = f.discoveryClient
-	} else {
-		// Fake-client path (NewInforming): build discovery from the fake kube client.
-		fakeKubeClient, ok := f.kubeClient.(*kubefake.Clientset)
-		if !ok {
-			return errors.New("failed to cast kube client to fake clientset")
-		}
-
-		fakeDiscovery, ok := fakeKubeClient.Discovery().(*fakediscovery.FakeDiscovery)
-		if !ok {
-			return errors.New("failed to cast discovery client to fake discovery")
-		}
-
-		// Combine explicit resources with CRD-derived resources
-		allResources := f.discoveryResources
-		crdResources := f.buildDiscoveryResourcesFromCRDs()
-		allResources = append(allResources, crdResources...)
-		fakeDiscovery.Resources = allResources
-
-		disco = fakeDiscovery
+	// Build discovery client from registered CRDs and any explicit resources
+	fakeKubeClient, ok := f.kubeClient.(*kubefake.Clientset)
+	if !ok {
+		return errors.New("failed to cast kube client to fake clientset")
 	}
 
-	f.controller = internal.NewController(ctx, f.Options, f.kubeClient, f.RSMClient, f.dynamicClient, disco)
+	fakeDiscovery, ok := fakeKubeClient.Discovery().(*fakediscovery.FakeDiscovery)
+	if !ok {
+		return errors.New("failed to cast discovery client to fake discovery")
+	}
+
+	// Combine explicit resources with CRD-derived resources
+	allResources := f.discoveryResources
+	crdResources := f.buildDiscoveryResourcesFromCRDs()
+	allResources = append(allResources, crdResources...)
+	fakeDiscovery.Resources = allResources
+
+	f.controller = internal.NewController(ctx, f.Options, f.kubeClient, f.RSMClient, f.dynamicClient, fakeDiscovery)
 
 	// Start controller in background
 	go func() {
@@ -293,96 +221,9 @@ func (f *Framework) Start(ctx context.Context, workers int) error {
 	return nil
 }
 
-// GetGoldenRuleFiles returns all golden rule file paths for the specified resolver types.
-func GetGoldenRuleFiles(resolverType []v1alpha1.ResolverType) []string {
-	var files []string //nolint:prealloc
-
-	for _, resolverType := range resolverType {
-		goldenDir := filepath.Join("golden", string(resolverType))
-		if _, err := os.Stat(goldenDir); os.IsNotExist(err) {
-			panic(fmt.Sprintf("golden rules directory does not exist for resolver type %s: expected at %s", resolverType, goldenDir))
-		}
-
-		matches, _ := filepath.Glob(filepath.Join(goldenDir, "*.yaml"))
-		files = append(files, matches...)
-	}
-
-	return files
-}
-
-// GoldenRule defines the structure of a golden rule for testing metric generation.
-// Every field is required; no omitempty allowed, to ensure the test is fully specified.
-type GoldenRule struct {
-	Name        string                                 `yaml:"name"`
-	Description string                                 `yaml:"description"`
-	In          *unstructured.Unstructured             `yaml:"in"` // In is resource-agnostic to accommodate for any future resources introduced in RSM.
-	Metrics     []string                               `yaml:"metrics"`
-	Status      *v1alpha1.ResourceMetricsMonitorStatus `yaml:"status"`
-}
-
-// GoldenRulesFromYAML loads all golden rules from a (possibly multi-document) YAML file.
-// Documents are separated by "---" lines; each document must have a non-empty name field.
-func GoldenRulesFromYAML(_ context.Context, path string) ([]*GoldenRule, error) {
-	data, err := os.ReadFile(ensureSafePath(path))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read YAML file %s: %w", path, err)
-	}
-
-	// Normalise Windows line endings, then split on YAML document separators.
-	data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
-	docs := bytes.Split(data, []byte("\n---\n"))
-
-	var rules []*GoldenRule
-
-	for _, doc := range docs {
-		// The very first document may start with "---"; strip it.
-		doc = bytes.TrimPrefix(bytes.TrimSpace(doc), []byte("---"))
-		doc = bytes.TrimSpace(doc)
-
-		if len(doc) == 0 {
-			continue
-		}
-
-		goldenRule := &GoldenRule{}
-		if err := yaml.Unmarshal(doc, goldenRule); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal YAML document in %s: %w", path, err)
-		}
-
-		// Skip documents that are all comments or whitespace (name will be empty).
-		if goldenRule.Name == "" {
-			continue
-		}
-
-		rules = append(rules, goldenRule)
-	}
-
-	return rules, nil
-}
-
-// ValidateUnstructuredGoldenRule validates the structure of a golden rule, ensuring all required fields are present.
-func ValidateUnstructuredGoldenRule(rule *GoldenRule) error {
-	if rule.Name == "" {
-		return errors.New("golden rule has no name")
-	}
-
-	if rule.Description == "" {
-		return fmt.Errorf("golden rule %s has no description", rule.Name)
-	}
-
-	if len(rule.Metrics) == 0 {
-		return fmt.Errorf("golden rule %s has no metrics", rule.Name)
-	}
-
-	if rule.In == nil || rule.In.GetKind() != ResourceMetricsMonitorKind {
-		return fmt.Errorf("golden rule %s has no RMM input resource", rule.Name)
-	}
-
-	return nil
-}
-
 // ApplyCRFromYAML applies a custom resource from a YAML file.
 func (f *Framework) ApplyCRFromYAML(ctx context.Context, path string) (*unstructured.Unstructured, error) {
-	data, err := os.ReadFile(ensureSafePath(path))
+	data, err := os.ReadFile(testutil.EnsureSafePath(path))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read YAML file %s: %w", path, err)
 	}
@@ -486,7 +327,7 @@ func (f *Framework) DeleteCR(ctx context.Context, gvr schema.GroupVersionResourc
 
 // CreateCRDFromYAML creates a CRD from a YAML file and waits for it to be indexed.
 func (f *Framework) CreateCRDFromYAML(ctx context.Context, path string) (*apiextensionsv1.CustomResourceDefinition, error) {
-	data, err := os.ReadFile(ensureSafePath(path))
+	data, err := os.ReadFile(testutil.EnsureSafePath(path))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read YAML file %s: %w", path, err)
 	}
@@ -521,32 +362,23 @@ func (f *Framework) GetIndexedCRDs() []*apiextensionsv1.CustomResourceDefinition
 	return crds
 }
 
-// GetResourcePluralNameForGVK returns the plural resource name for a given GVK.
-// It first queries the CRD informer index (fake-client path) and falls back to
-// the discovery-backed REST mapper (real-client path via NewForConfig).
+// GetResourcePluralNameForGVK returns the plural resource name for a given GVK by querying the CRD informer index.
 func (f *Framework) GetResourcePluralNameForGVK(gvk schema.GroupVersionKind) (string, error) {
-	// Try CRD informer index first (populated by NewInforming + CreateCRDFromYAML).
-	if f.crdInformer != nil {
-		objs, err := f.crdInformer.GetIndexer().ByIndex(gvkIndexName, gvk.String())
-		if err == nil && len(objs) > 0 {
-			crd, ok := objs[0].(*apiextensionsv1.CustomResourceDefinition)
-			if ok {
-				return crd.Spec.Names.Plural, nil
-			}
-		}
+	objs, err := f.crdInformer.GetIndexer().ByIndex(gvkIndexName, gvk.String())
+	if err != nil {
+		return "", fmt.Errorf("failed to query CRD index for %s: %w", gvk.String(), err)
 	}
 
-	// Fall back to REST mapper (populated by NewForConfig).
-	if f.restMapper != nil {
-		mapping, err := f.restMapper.RESTMapping(gvk.GroupKind(), gvk.Version)
-		if err != nil {
-			return "", fmt.Errorf("REST mapper failed to resolve %s: %w", gvk, err)
-		}
-
-		return mapping.Resource.Resource, nil
+	if len(objs) == 0 {
+		return "", fmt.Errorf("no CRD found for %s", gvk.String())
 	}
 
-	return "", fmt.Errorf("no CRD found for %s (no CRD informer or REST mapper available)", gvk)
+	crd, ok := objs[0].(*apiextensionsv1.CustomResourceDefinition)
+	if !ok {
+		return "", fmt.Errorf("unexpected type in CRD index for %s: %T", gvk.String(), objs[0])
+	}
+
+	return crd.Spec.Names.Plural, nil
 }
 
 // ToUnstructured converts a runtime.Object to an unstructured.Unstructured.
@@ -575,27 +407,6 @@ func (f *Framework) FetchTelemetryMetrics(ctx context.Context) (string, error) {
 // FetchMainMetrics fetches metrics from the main server endpoint.
 func (f *Framework) FetchMainMetrics(ctx context.Context) (string, error) {
 	return f.fetchFromLocalhost(ctx, *f.Options.MainPort, "/metrics")
-}
-
-// CompareMainMetrics scrapes the main metrics endpoint and compares the result
-// against expectedMetricLines, filtering to only the metric families declared
-// in the expected text (identified by "# TYPE" lines). Returns nil on match.
-func (f *Framework) CompareMainMetrics(expectedMetricLines []string) error {
-	expectedMetrics := strings.Join(expectedMetricLines, "\n") + "\n"
-
-	var familyNames []string
-
-	for _, line := range strings.Split(expectedMetrics, "\n") {
-		if strings.HasPrefix(line, "# TYPE ") {
-			if parts := strings.Fields(line); len(parts) >= 3 {
-				familyNames = append(familyNames, parts[2])
-			}
-		}
-	}
-
-	url := fmt.Sprintf("http://127.0.0.1:%d/metrics", *f.Options.MainPort)
-
-	return testutil.ScrapeAndCompare(url, strings.NewReader(expectedMetrics), familyNames...)
 }
 
 // buildDiscoveryResourcesFromCRDs builds APIResourceList entries from indexed CRDs.
@@ -712,7 +523,7 @@ func (f *Framework) fetchFromLocalhost(ctx context.Context, port int, path strin
 		},
 	}
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // URL is constructed from localhost only
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch %s: %w", path, err)
 	}
@@ -810,47 +621,4 @@ func (b *CRBuilder) WithAnnotation(key, value string) *CRBuilder {
 // Build returns the constructed unstructured CR.
 func (b *CRBuilder) Build() *unstructured.Unstructured {
 	return b.cr
-}
-
-// ensureSafePath checks if the provided path is within the tests directory to prevent file system access outside of the intended scope.
-func ensureSafePath(path string) string {
-	cleanedPath := filepath.Clean(path)
-
-	absolutePath, err := filepath.Abs(cleanedPath)
-	if err != nil {
-		panic(fmt.Sprintf("Failed to get absolute path: %v", err))
-	}
-
-	testsDir, err := filepath.Abs("..")
-	if err != nil {
-		panic(fmt.Sprintf("Failed to get absolute path of tests directory: %v", err))
-	}
-
-	if !strings.HasPrefix(absolutePath, testsDir) {
-		panic(fmt.Sprintf("Unsafe path detected: %s is outside of the tests directory", absolutePath))
-	}
-
-	return absolutePath
-}
-
-// getFreePort returns an available port by briefly binding to port 0 (which lets the OS assign a free port).
-func GetFreePort(ctx context.Context) (int, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	var lc net.ListenConfig
-
-	listener, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, fmt.Errorf("failed to listen on free port: %w", err)
-	}
-
-	defer listener.Close()
-
-	addr, ok := listener.Addr().(*net.TCPAddr)
-	if !ok {
-		return 0, errors.New("unexpected address type")
-	}
-
-	return addr.Port, nil
 }

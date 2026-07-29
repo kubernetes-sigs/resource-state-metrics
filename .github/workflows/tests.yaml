@@ -83,8 +83,8 @@ jobs:
       - name: Setup dependencies
         run: make setup
       - name: Run e2e tests (iteration ${{ matrix.iteration }})
-        run: make test_e2e
-  compare-metrics:
+        run: make test_e2e_fake
+  test-e2e-envtest:
     needs: setup
     runs-on: ubuntu-latest
     strategy:
@@ -101,5 +101,5 @@ jobs:
           go-version-file: go.mod
       - name: Setup dependencies
         run: make setup
-      - name: Compare metrics (iteration ${{ matrix.iteration }})
-        run: make test_compare_metrics
+      - name: Run envtest e2e tests (iteration ${{ matrix.iteration }})
+        run: make test_e2e_envtest

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package tests
+package envtest
 
 import (
 	"context"
@@ -28,13 +28,14 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/kubernetes-sigs/resource-state-metrics/internal"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
-	"github.com/kubernetes-sigs/resource-state-metrics/tests/framework"
+	"github.com/kubernetes-sigs/resource-state-metrics/tests/envtest/framework"
+	"github.com/kubernetes-sigs/resource-state-metrics/tests/testutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
-// TestCompareMetrics validates metric output against all golden rules using
+// TestE2EEnvtest validates metric output against all golden rules using
 // envtest. Unlike TestGoldenRules which uses fake clients, this test exercises
 // real watch events, CRD discovery, and status updates.
 //
@@ -44,7 +45,7 @@ import (
 //	USE_EXISTING_CLUSTER=true    – connects to the current KUBECONFIG    (make test_compare_metrics_kind)
 //
 //nolint:gocognit,cyclop
-func TestCompareMetrics(t *testing.T) {
+func TestE2EEnvtest(t *testing.T) {
 	t.Parallel()
 
 	useExisting := os.Getenv("USE_EXISTING_CLUSTER") == "true"
@@ -63,8 +64,8 @@ func TestCompareMetrics(t *testing.T) {
 	testEnv := &envtest.Environment{
 		UseExistingCluster: &useExisting,
 		CRDDirectoryPaths: []string{
-			filepath.Join("..", "manifests"),
-			filepath.Join("manifests", "custom-resource-definition"),
+			filepath.Join("..", "..", "manifests"),
+			filepath.Join("..", "manifests", "custom-resource-definition"),
 		},
 	}
 
@@ -82,19 +83,22 @@ func TestCompareMetrics(t *testing.T) {
 	})
 
 	// Build the framework from the envtest rest.Config.
-	f, err := framework.NewForConfig(cfg)
+	f, err := framework.NewForConfig(ctx, cfg)
 	if err != nil {
 		t.Fatalf("Failed to create framework: %v", err)
 	}
 
 	// Apply custom resources from test manifests.
-	_, crFiles, err := getCRDandNonCRDManifests(t)
+	_, crFiles, err := testutil.GetCRDAndCRManifests(
+		[]string{"../manifests", "../../manifests"},
+		[]string{"cluster-role", "deployment", "service", "service-account"},
+	)
 	if err != nil {
 		t.Fatalf("Failed to list manifest files: %v", err)
 	}
 
 	for _, path := range crFiles {
-		if _, err := f.ApplyCRFromYAML(ctx, path); err != nil {
+		if err := f.ApplyCRFromYAML(ctx, path); err != nil {
 			t.Fatalf("Failed to apply CR from %s: %v", path, err)
 		}
 	}
@@ -109,10 +113,10 @@ func TestCompareMetrics(t *testing.T) {
 	// testing the full event -> reconcile -> metrics pipeline.
 	type goldenEntry struct {
 		file string
-		rule *framework.GoldenRule
+		rule *testutil.GoldenRule
 	}
 
-	goldenFiles := framework.GetGoldenRuleFiles([]v1alpha1.ResolverType{
+	goldenFiles := testutil.GetGoldenRuleFiles("../golden", []v1alpha1.ResolverType{
 		v1alpha1.ResolverTypeUnstructured,
 		v1alpha1.ResolverTypeCEL,
 		v1alpha1.ResolverTypeStarlark,
@@ -121,31 +125,33 @@ func TestCompareMetrics(t *testing.T) {
 	rules := make([]goldenEntry, 0, len(goldenFiles))
 
 	for _, file := range goldenFiles {
-		rule, err := framework.GoldenRuleFromYAML(ctx, file)
+		rulesFromFile, err := testutil.GoldenRulesFromYAML(ctx, file)
 		if err != nil {
 			t.Fatalf("Failed to load golden rule from %s: %v", file, err)
 		}
 
-		if err := framework.ValidateUnstructuredGoldenRule(rule); err != nil {
-			t.Fatalf("Golden rule %s is invalid: %v", file, err)
-		}
+		for _, rule := range rulesFromFile {
+			if err := testutil.ValidateUnstructuredGoldenRule(rule); err != nil {
+				t.Fatalf("Golden rule %s is invalid: %v", file, err)
+			}
 
-		var rmm v1alpha1.ResourceMetricsMonitor
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rule.In.Object, &rmm); err != nil {
-			t.Fatalf("Failed to convert golden rule input to RMM in %s: %v", file, err)
-		}
+			var rmm v1alpha1.ResourceMetricsMonitor
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rule.In.Object, &rmm); err != nil {
+				t.Fatalf("Failed to convert golden rule input to RMM in %s: %v", file, err)
+			}
 
-		if _, err := f.RSMClient.ResourceStateMetricsV1alpha1().ResourceMetricsMonitors(rmm.Namespace).
-			Create(ctx, &rmm, metav1.CreateOptions{}); err != nil {
-			t.Fatalf("Failed to create RMM %s/%s: %v", rmm.Namespace, rmm.Name, err)
-		}
+			if _, err := f.RSMClient.ResourceStateMetricsV1alpha1().ResourceMetricsMonitors(rmm.Namespace).
+				Create(ctx, &rmm, metav1.CreateOptions{}); err != nil {
+				t.Fatalf("Failed to create RMM %s/%s: %v", rmm.Namespace, rmm.Name, err)
+			}
 
-		rules = append(rules, goldenEntry{file: file, rule: rule})
+			rules = append(rules, goldenEntry{file: file, rule: rule})
+		}
 	}
 
 	// Wait for all RMMs to be processed.
 	for _, e := range rules {
-		if _, err := f.WaitForRMMProcessed(ctx, e.rule.In.GetNamespace(), e.rule.In.GetName(), 30*time.Second); err != nil {
+		if err := f.WaitForRMMProcessed(ctx, e.rule.In.GetNamespace(), e.rule.In.GetName(), 30*time.Second); err != nil {
 			t.Fatalf("Timed out waiting for RMM %s/%s: %v", e.rule.In.GetNamespace(), e.rule.In.GetName(), err)
 		}
 	}
@@ -217,7 +223,7 @@ func envtestPollCompareMetrics(t *testing.T, f *framework.Framework, expectedMet
 // envtestPollStatus polls until the RMM status matches the expected golden output.
 // Cardinality status is updated asynchronously by a background goroutine after
 // the Processed condition is set.
-func envtestPollStatus(ctx context.Context, t *testing.T, f *framework.Framework, rule *framework.GoldenRule, opts cmp.Options) {
+func envtestPollStatus(ctx context.Context, t *testing.T, f *framework.Framework, rule *testutil.GoldenRule, opts cmp.Options) {
 	t.Helper()
 
 	deadline := time.After(15 * time.Second)
