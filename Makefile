@@ -60,6 +60,9 @@ YAML_FILES = $(shell find . -type d -name vendor -prune -o -type d -name $(patsu
 YQ ?= $(GOBIN)/yq
 YQ_VERSION ?= v4.52.4
 SETUP_ENVTEST_VERSION ?= release-0.23
+# ENVTEST_K8S_VERSION is set to the version of k8s.io/api in go.mod
+# convert e.g. v0.32.3 to 1.32
+ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'.' '{printf "1.%d.x", $$2}')
 
 BRANCH = $(shell git rev-parse --abbrev-ref HEAD)
 BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
@@ -220,30 +223,34 @@ pprof:
 
 .PHONY: test_unit
 test_unit:
-	@$(GO) test -v -race $(shell go list ./... | \
+	@$(GO) test -count=1 -v -race $(shell go list ./... | \
 		grep -v "/generated" | \
 		grep -v "/signals" | \
 		grep -v "/tests" | \
 		grep -v "/version")
 
-.PHONY: test_e2e
-test_e2e:
-	@$(GO) test -count=1 -v -race ./tests/...
-
-# ENVTEST_K8S_VERSION is set to the version of k8s.io/api in go.mod
-# convert e.g. v0.32.3 to 1.32
-ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'.' '{printf "1.%d.x", $$2}')
+.PHONY: test_e2e_fake
+test_e2e_fake:
+	@$(GO) test -count=1 -v -race ./tests/fake/...
 
 # TODO: bavarianbidi
 # install the kube-apiserver and etcd-binary to the LOCALBIN folder
 # this requires the "lazytool" implementation of https://github.com/kubernetes-sigs/resource-state-metrics/issues/37
-.PHONY: test_compare_metrics
-test_compare_metrics:
+.PHONY: test_e2e_envtest
+test_e2e_envtest:
 	@KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(GOBIN) -p path)" \
-	$(GO) test -race -v -count=1 -timeout 120s ./tests/ -run TestCompareMetrics
+	$(GO) test -race -v -count=1 -timeout 120s ./tests/envtest/ -run TestE2EEnvtest
+
+.PHONY: test_e2e_envtest_kind
+test_e2e_envtest_kind:
+	@USE_EXISTING_CLUSTER=true \
+	$(GO) test -race -v -count=1 -timeout 120s ./tests/envtest/ -run TestE2EEnvtest
+
+.PHONY: test_e2e
+test_e2e: test_e2e_fake test_e2e_envtest
 
 .PHONY: test
-test: test_unit test_e2e test_compare_metrics
+test: test_unit test_e2e
 
 ###########
 # Linting #
