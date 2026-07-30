@@ -17,4 +17,5 @@ limitations under the License.
 /*
 Package resolver provides the Resolver interface and its implementations for resolving expressions in resource-state-metrics.
 */
+
 package resolver
