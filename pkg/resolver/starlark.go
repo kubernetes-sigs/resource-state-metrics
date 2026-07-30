@@ -17,6 +17,7 @@ limitations under the License.
 package resolver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -80,13 +81,17 @@ func NewStarlarkResolver(logger klog.Logger, script string, timeout time.Duratio
 	}
 }
 
-// Resolve executes the Starlark script with the given object and returns resolved families.
+// ResolveComposite executes the Starlark script with the given object and returns resolved families.
 // NOTE: The following "go.starlark.net/syntax.FileOptions" are enabled for "go.starlark.net/starlark.ExecFileOptions" (script execution):
 // * `GlobalReassign`: Allow reassigning global variables in the script.
 // * `Set`: Allow using the `set` statement in the script.
 // * `TopLevelControl`: Allow using control flow statements (if, for, while) at the top level of the script.
 // * `While`: Allow using `while` loops in the script.
-func (sr *StarlarkResolver) Resolve(obj map[string]interface{}) ([]ResolvedFamily, error) {
+func (sr *StarlarkResolver) ResolveComposite(ctx context.Context, query string, obj map[string]interface{}) ([]ResolvedFamily, error) {
+	// Wrap the incoming context with the resolver's timeout
+	ctx, cancel := context.WithTimeout(ctx, sr.timeout)
+	defer cancel()
+
 	type result struct {
 		families []ResolvedFamily
 		err      error
@@ -105,17 +110,16 @@ func (sr *StarlarkResolver) Resolve(obj map[string]interface{}) ([]ResolvedFamil
 	resultChan := make(chan result, 1)
 
 	go func() {
+		// Starlark scripts are pre-loaded, so 'query' is safely ignored here
+		// but kept in the signature to satisfy the master Resolver interface.
 		families, err := sr.resolveWithSteps(thread, obj)
 		resultChan <- result{families: families, err: err}
 	}()
 
-	timer := time.NewTimer(sr.timeout)
-	defer timer.Stop()
-
 	select {
 	case res := <-resultChan:
 		return res.families, res.err
-	case <-timer.C:
+	case <-ctx.Done(): // Listen to the context instead of a separate timer
 		thread.Cancel("timeout exceeded")
 
 		return nil, fmt.Errorf("starlark script exceeded timeout of %v", sr.timeout)

@@ -16,6 +16,7 @@ limitations under the License.
 package resolver
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -46,7 +47,7 @@ families = [
 
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	families, err := sg.Resolve(obj)
+	families, err := sg.ResolveComposite(context.Background(), "", obj)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -127,7 +128,7 @@ families = [
 
 			sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-			families, err := sg.Resolve(obj)
+			families, err := sg.ResolveComposite(context.Background(), "", obj)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -209,7 +210,7 @@ families = [
 
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	families, err := sg.Resolve(obj)
+	families, err := sg.ResolveComposite(context.Background(), "", obj)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -241,7 +242,7 @@ families = []
 	// Use a very short timeout with high step limit so timeout triggers first
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 100*time.Millisecond, 100000000)
 
-	_, err := sg.Resolve(obj)
+	_, err := sg.ResolveComposite(context.Background(), "", obj)
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -267,7 +268,7 @@ families = []
 	// Use a very low step limit
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 1000)
 
-	_, err := sg.Resolve(obj)
+	_, err := sg.ResolveComposite(context.Background(), "", obj)
 	if err == nil {
 		t.Fatal("expected step limit error, got nil")
 	}
@@ -301,7 +302,7 @@ families = [
 
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	families, err := sg.Resolve(obj)
+	families, err := sg.ResolveComposite(context.Background(), "", obj)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -330,7 +331,7 @@ this is not valid starlark
 
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	_, err := sg.Resolve(obj)
+	_, err := sg.ResolveComposite(context.Background(), "", obj)
 	if err == nil {
 		t.Fatal("expected parse error, got nil")
 	}
@@ -347,7 +348,7 @@ samples = []
 
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	_, err := sg.Resolve(obj)
+	_, err := sg.ResolveComposite(context.Background(), "", obj)
 	if err == nil {
 		t.Fatal("expected missing families error, got nil")
 	}
@@ -370,7 +371,7 @@ families = [
 
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	_, err := sg.Resolve(obj)
+	_, err := sg.ResolveComposite(context.Background(), "", obj)
 	if err == nil {
 		t.Fatal("expected invalid kind error, got nil")
 	}
@@ -391,7 +392,7 @@ families = []
 
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	families, err := sg.Resolve(obj)
+	families, err := sg.ResolveComposite(context.Background(), "", obj)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -434,7 +435,7 @@ families = [
 
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	families, err := sg.Resolve(obj)
+	families, err := sg.ResolveComposite(context.Background(), "", obj)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -470,7 +471,7 @@ families = [family(name="test", help="test", kind="gauge", samples=samples)]
 	obj := map[string]any{}
 	sr := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	families, err := sr.Resolve(obj)
+	families, err := sr.ResolveComposite(context.Background(), "", obj)
 	if err != nil {
 		t.Fatalf("top-level for loop should work: %v", err)
 	}
@@ -498,7 +499,7 @@ families = [family(name="test", help="test", kind="gauge", samples=[
 	obj := map[string]any{"enabled": true}
 	sr := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	families, err := sr.Resolve(obj)
+	families, err := sr.ResolveComposite(context.Background(), "", obj)
 	if err != nil {
 		t.Fatalf("top-level if should work: %v", err)
 	}
@@ -525,7 +526,7 @@ families = [family(name="test", help="test", kind="gauge", samples=samples)]
 	obj := map[string]any{}
 	sr := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	families, err := sr.Resolve(obj)
+	families, err := sr.ResolveComposite(context.Background(), "", obj)
 	if err != nil {
 		t.Fatalf("while loop should work: %v", err)
 	}
@@ -552,7 +553,7 @@ families = [family(name="test", help="test", kind="gauge", samples=[
 	obj := map[string]any{}
 	sr := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	families, err := sr.Resolve(obj)
+	families, err := sr.ResolveComposite(context.Background(), "", obj)
 	if err != nil {
 		t.Fatalf("global reassignment should work: %v", err)
 	}
@@ -582,7 +583,7 @@ families = [
 	// Capture a wall-clock window around Resolve() to assert closely.
 	before := time.Now().Unix()
 
-	families, err := sg.Resolve(obj)
+	families, err := sg.ResolveComposite(context.Background(), "", obj)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -622,7 +623,7 @@ families = [
 
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	families, err := sg.Resolve(obj)
+	families, err := sg.ResolveComposite(context.Background(), "", obj)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -653,7 +654,7 @@ families = [family(name="parsed_metric", help="Parsed timestamp", kind="gauge", 
 
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	families, err := sg.Resolve(obj)
+	families, err := sg.ResolveComposite(context.Background(), "", obj)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -678,7 +679,7 @@ families = [family(name="parsed_metric", help="Parsed timestamp", kind="gauge", 
 
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	families, err := sg.Resolve(obj)
+	families, err := sg.ResolveComposite(context.Background(), "", obj)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -701,7 +702,7 @@ families = []
 
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	_, err := sg.Resolve(obj)
+	_, err := sg.ResolveComposite(context.Background(), "", obj)
 	if err == nil {
 		t.Fatal("expected error when parsing malformed timestamp, got nil")
 	}
@@ -752,7 +753,7 @@ families = [family(name="not_synced", help="not synced", kind="gauge", samples=s
 
 	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	families, err := sg.Resolve(makeObj(old))
+	families, err := sg.ResolveComposite(context.Background(), "", makeObj(old))
 	if err != nil {
 		t.Fatalf("unexpected error for old condition: %v", err)
 	}
@@ -761,7 +762,7 @@ families = [family(name="not_synced", help="not synced", kind="gauge", samples=s
 		t.Errorf("expected 1 sample for condition older than grace, got %d", len(families[0].Samples))
 	}
 
-	families, err = sg.Resolve(makeObj(fresh))
+	families, err = sg.ResolveComposite(context.Background(), "", makeObj(fresh))
 	if err != nil {
 		t.Fatalf("unexpected error for fresh condition: %v", err)
 	}
@@ -789,7 +790,7 @@ families = [family(name="test", help="test", kind="gauge", samples=samples)]
 	obj := map[string]any{}
 	sr := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
 
-	families, err := sr.Resolve(obj)
+	families, err := sr.ResolveComposite(context.Background(), "", obj)
 	if err != nil {
 		t.Fatalf("set() builtin should work: %v", err)
 	}
