@@ -68,6 +68,7 @@ func (ur *UnstructuredResolver) ResolveComposite(ctx context.Context, query stri
 
 	// Type assertion to convert interface{} safely into map[string]string
 	labels := make(map[string]string)
+	
 	if mapRes, ok := gotResolved.(map[string]interface{}); ok {
 		for k, v := range mapRes {
 			labels[k] = fmt.Sprintf("%v", v)
@@ -92,7 +93,7 @@ func (ur *UnstructuredResolver) ResolveComposite(ctx context.Context, query stri
 }
 
 // ResolveScalar satisfies the Resolver interface for flat key-value resolutions.
-func (r *UnstructuredResolver) ResolveScalar(_ context.Context, query string, obj map[string]interface{}) (map[string]string, error) {
+func (ur *UnstructuredResolver) ResolveScalar(_ context.Context, query string, obj map[string]interface{}) (map[string]string, error) {
 	fields := strings.Split(query, ".")
 
 	val, found, err := unstructured.NestedFieldNoCopy(obj, fields...)

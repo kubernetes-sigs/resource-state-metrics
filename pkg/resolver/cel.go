@@ -50,14 +50,6 @@ type CELResolver struct {
 	familyName                 string
 }
 
-
-// SanitizeKey formats the key to ensure it is a valid metric label.
-func (cr *CELResolver) SanitizeKey(key string) string {
-	// If you have specific regex replacements for Prometheus labels, put them here.
-	// Otherwise, a simple pass-through is fine to satisfy the interface.
-	return key
-}
-
 // CELResolver implements the Resolver interface.
 var _ Resolver = &CELResolver{}
 // NewCELResolver returns a new limits-aware CEL resolver.
@@ -71,6 +63,13 @@ func NewCELResolver(logger klog.Logger, costLimit uint64, timeout time.Duration,
 		managedRMMName:             rmmName,
 		familyName:                 familyName,
 	}
+}
+
+// SanitizeKey formats the key to ensure it is a valid metric label.
+func (cr *CELResolver) SanitizeKey(key string) string {
+	// If you have specific regex replacements for Prometheus labels, put them here.
+	// Otherwise, a simple pass-through is fine to satisfy the interface.
+	return key
 }
 
 // SupportsUnderscoreExpansion indicates if this resolver supports expanding underscores.
@@ -159,9 +158,9 @@ func (cr *CELResolver) ResolveComposite(ctx context.Context, query string, obj m
 		err := fmt.Errorf("CEL query exceeded timeout of %v", cr.timeout)
 		logger.Error(err, "ignoring resolution for query")
 		if cr.expressionEvaluationMetric != nil {
-			
 			cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "timeout").Inc()
 		}
+
 		return nil, err
 	}
 }
