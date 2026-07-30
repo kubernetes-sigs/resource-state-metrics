@@ -53,6 +53,13 @@ type CELResolver struct {
 // CELResolver implements the Resolver interface.
 var _ Resolver = &CELResolver{}
 
+// SanitizeKey formats the key to ensure it is a valid metric label.
+func (cr *CELResolver) SanitizeKey(key string) string {
+	// If you have specific regex replacements for Prometheus labels, put them here.
+	// Otherwise, a simple pass-through is fine to satisfy the interface.
+	return key
+}
+
 // SupportsUnderscoreExpansion indicates if this resolver supports expanding underscores.
 func (cr *CELResolver) SupportsUnderscoreExpansion() bool {
 	// Return true or false based on how you want the CEL engine to handle underscores
@@ -123,10 +130,11 @@ func (cr *CELResolver) ResolveComposite(ctx context.Context, query string, obj m
 	case res := <-resultChan:
 		if res.err != nil {
 			logger.V(1).Info("ignoring resolution for query", "info", res.err)
+
 			if cr.expressionEvaluationMetric != nil {
 				cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "error").Inc()
 			}
-			
+
 			return nil, res.err
 		}
 
@@ -151,6 +159,7 @@ func (cr *CELResolver) ResolveComposite(ctx context.Context, query string, obj m
 		err := fmt.Errorf("CEL query exceeded timeout of %v", cr.timeout)
 		logger.Error(err, "ignoring resolution for query")
 		if cr.expressionEvaluationMetric != nil {
+
 			cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "timeout").Inc()
 		}
 		return nil, err
@@ -471,11 +480,4 @@ func (cr *CELResolver) defaultMapping(query string) map[string]string {
 	cr.logger.V(2).Info("query fell back to default mapping (will be skipped at write time)", "query", query)
 
 	return map[string]string{query: query}
-}
-
-// SanitizeKey formats the key to ensure it is a valid metric label.
-func (cr *CELResolver) SanitizeKey(key string) string {
-	// If you have specific regex replacements for Prometheus labels, put them here.
-	// Otherwise, a simple pass-through is fine to satisfy the interface.
-	return key
 }

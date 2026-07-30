@@ -18,6 +18,7 @@ package resolver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -53,14 +54,15 @@ func (ur *UnstructuredResolver) ResolveComposite(ctx context.Context, query stri
 
 	// Swapped unstructuredObjectMap for obj to match signature
 	gotResolved, found, err := unstructured.NestedFieldNoCopy(obj, strings.Split(query, ".")...)
-
 	if err != nil {
 		logger.V(1).Info("ignoring resolution for query", "info", err)
+
 		return nil, fmt.Errorf("failed to resolve field path %q: %w", query, err)
 	}
 
 	if !found {
 		logger.V(2).Info("query fell back to default mapping (field not found)", "query", query)
+
 		return nil, fmt.Errorf("field path %q not found in object", query)
 	}
 
@@ -73,7 +75,7 @@ func (ur *UnstructuredResolver) ResolveComposite(ctx context.Context, query stri
 	} else if stringMap, ok := gotResolved.(map[string]string); ok {
 		labels = stringMap
 	} else {
-		return nil, fmt.Errorf("resolved field is not a valid map type")
+		errors.New("resolved field is not a valid map type")
 	}
 
 	// Wrap in ResolvedFamily
@@ -90,8 +92,9 @@ func (ur *UnstructuredResolver) ResolveComposite(ctx context.Context, query stri
 }
 
 // ResolveScalar satisfies the Resolver interface for flat key-value resolutions.
-func (r *UnstructuredResolver) ResolveScalar(ctx context.Context, query string, obj map[string]interface{}) (map[string]string, error) {
+func (r *UnstructuredResolver) ResolveScalar(_ context.Context, query string, obj map[string]interface{}) (map[string]string, error) {
 	fields := strings.Split(query, ".")
+
 	val, found, err := unstructured.NestedFieldNoCopy(obj, fields...)
 	if err != nil || !found || val == nil {
 		return nil, fmt.Errorf("field %q not found or error traversing: %w", query, err)

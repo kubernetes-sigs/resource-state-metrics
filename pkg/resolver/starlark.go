@@ -87,7 +87,7 @@ func NewStarlarkResolver(logger klog.Logger, script string, timeout time.Duratio
 // * `Set`: Allow using the `set` statement in the script.
 // * `TopLevelControl`: Allow using control flow statements (if, for, while) at the top level of the script.
 // * `While`: Allow using `while` loops in the script.
-func (sr *StarlarkResolver) ResolveComposite(ctx context.Context, query string, obj map[string]interface{}) ([]ResolvedFamily, error) {
+func (sr *StarlarkResolver) ResolveComposite(ctx context.Context, _ string, obj map[string]interface{}) ([]ResolvedFamily, error) {
 	// Wrap the incoming context with the resolver's timeout
 	ctx, cancel := context.WithTimeout(ctx, sr.timeout)
 	defer cancel()
