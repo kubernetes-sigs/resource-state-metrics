@@ -75,7 +75,7 @@ func (ur *UnstructuredResolver) ResolveComposite(ctx context.Context, query stri
 	} else if stringMap, ok := gotResolved.(map[string]string); ok {
 		labels = stringMap
 	} else {
-		errors.New("resolved field is not a valid map type")
+		return nil, errors.New("resolved field is not a valid map type")
 	}
 
 	// Wrap in ResolvedFamily
