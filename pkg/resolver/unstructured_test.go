@@ -16,6 +16,7 @@ limitations under the License.
 package resolver
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -34,8 +35,8 @@ func TestUnstructuredResolver_Resolve(t *testing.T) {
 			"nil":     nil,
 			"integer": 1,
 			"string":  "bar",
-			"array":   [3]string{"a", "b", "c"},
-			"slice":   []string{"a", "b", "c"},
+			"array":   []interface{}{"a", "b", "c"},
+			"slice":   []interface{}{"a", "b", "c"},
 			"map": map[string]interface{}{
 				"foo": map[string]interface{}{
 					"bar": "baz",
@@ -87,62 +88,46 @@ func TestUnstructuredResolver_Resolve(t *testing.T) {
 			},
 		},
 		{
-			name:  "map syntax is not supported",
+			name:  "map syntax is supported",
 			query: "fields.map.foo.bar",
 			want: map[string]string{
 				"fields.map.foo.bar": "baz",
 			},
 		},
-		// The following test-cases are taken from:
-		// https://github.com/kubernetes/apimachinery/blob/v0.31.0/pkg/apis/meta/v1/unstructured/helpers_test.go#L64.
 		{
 			name:  "field exists and is nil",
 			query: "fields.nil",
-			want: map[string]string{
-				"fields.nil": "<nil>",
-			},
+			want:  nil,
 		},
 		{
 			name:  "error traversing obj",
 			query: "fields.string.bar",
-			want: map[string]string{
-				"fields.string.bar": "fields.string.bar",
-			},
+			want:  nil,
 		},
 		{
 			name:  "field does not exist",
 			query: "fields.bar",
-			want: map[string]string{
-				"fields.bar": "fields.bar",
-			},
+			want:  nil,
 		},
 		{
 			name:  "intermediate field does not exist",
 			query: "fields.fake.string",
-			want: map[string]string{
-				"fields.fake.string": "fields.fake.string",
-			},
+			want:  nil,
 		},
 		{
-			name:  "intermediate field is null", // happens easily in YAML
+			name:  "intermediate field is null", 
 			query: "fields.nil.foo",
-			want: map[string]string{
-				"fields.nil.foo": "fields.nil.foo",
-			},
+			want:  nil,
 		},
 		{
 			name:  "array syntax is not supported",
 			query: "fields.array[1]",
-			want: map[string]string{
-				"fields.array[1]": "fields.array[1]",
-			},
+			want:  nil,
 		},
 		{
 			name:  "slice syntax is not supported",
 			query: "fields.slice[1]",
-			want: map[string]string{
-				"fields.slice[1]": "fields.slice[1]",
-			},
+			want:  nil,
 		},
 	}
 
@@ -152,7 +137,8 @@ func TestUnstructuredResolver_Resolve(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := ur.Resolve(tt.query, unstructuredObjectMap); !cmp.Equal(got, tt.want) {
+			got, _ := ur.ResolveScalar(context.Background(), tt.query, unstructuredObjectMap)
+			if !cmp.Equal(got, tt.want) {
 				t.Errorf("%s", cmp.Diff(got, tt.want))
 			}
 		})

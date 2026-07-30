@@ -17,6 +17,7 @@ limitations under the License.
 package resolver
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -37,25 +38,77 @@ func NewUnstructuredResolver(logger klog.Logger) *UnstructuredResolver {
 	return &UnstructuredResolver{logger: logger}
 }
 
-// Resolve resolves the given query against the given unstructured object.
+// ResolveComposite resolves the given query against the given unstructured object.
 // NOTE: Resolutions resulting in composite values for label keys and values are not supported, owing to upstream
 // limitations: https://github.com/kubernetes/apimachinery/blob/v0.31.0/pkg/apis/meta/v1/unstructured/helpers_test.go#L121.
-func (ur *UnstructuredResolver) Resolve(query string, unstructuredObjectMap map[string]interface{}) map[string]string {
+func (ur *UnstructuredResolver) ResolveComposite(ctx context.Context, query string, obj map[string]interface{}) ([]ResolvedFamily, error) {
 	logger := ur.logger.WithValues("query", query)
-	gotResolved, found, err := unstructured.NestedFieldNoCopy(unstructuredObjectMap, strings.Split(query, ".")...)
 
-	if !found {
-		logger.V(2).Info("query fell back to default mapping (field not found, will be skipped at write time)", "query", query)
-
-		return map[string]string{query: query}
+	// Support context cancellation
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
 	}
+
+	// Swapped unstructuredObjectMap for obj to match signature
+	gotResolved, found, err := unstructured.NestedFieldNoCopy(obj, strings.Split(query, ".")...)
 
 	if err != nil {
 		logger.V(1).Info("ignoring resolution for query", "info", err)
-		logger.V(2).Info("query fell back to default mapping (will be skipped at write time)", "query", query)
-
-		return map[string]string{query: query}
+		return nil, fmt.Errorf("failed to resolve field path %q: %w", query, err)
 	}
 
-	return map[string]string{query: fmt.Sprintf("%v", gotResolved)}
+	if !found {
+		logger.V(2).Info("query fell back to default mapping (field not found)", "query", query)
+		return nil, fmt.Errorf("field path %q not found in object", query)
+	}
+
+	// Type assertion to convert interface{} safely into map[string]string
+	labels := make(map[string]string)
+	if mapRes, ok := gotResolved.(map[string]interface{}); ok {
+		for k, v := range mapRes {
+			labels[k] = fmt.Sprintf("%v", v)
+		}
+	} else if stringMap, ok := gotResolved.(map[string]string); ok {
+		labels = stringMap
+	} else {
+		return nil, fmt.Errorf("resolved field is not a valid map type")
+	}
+
+	// Wrap in ResolvedFamily
+	family := ResolvedFamily{
+		Samples: []ResolvedSample{
+			{
+				Labels: labels,
+				Value:  1.0,
+			},
+		},
+	}
+
+	return []ResolvedFamily{family}, nil
+}
+
+// ResolveScalar satisfies the Resolver interface for flat key-value resolutions.
+func (r *UnstructuredResolver) ResolveScalar(ctx context.Context, query string, obj map[string]interface{}) (map[string]string, error) {
+	fields := strings.Split(query, ".")
+	val, found, err := unstructured.NestedFieldNoCopy(obj, fields...)
+	if err != nil || !found || val == nil {
+		return nil, fmt.Errorf("field %q not found or error traversing: %v", query, err)
+	}
+
+	// Safely format integers, floats, and booleans to strings to satisfy the interface
+	return map[string]string{query: fmt.Sprintf("%v", val)}, nil
+}
+
+// SanitizeKey ensures unstructured keys conform to metric name standards.
+func (ur *UnstructuredResolver) SanitizeKey(key string) string {
+	// Unstructured keys are passed through; the main engine handles standard replacements
+	return key
+}
+
+// SupportsUnderscoreExpansion dictates if this resolver handles matrix expansions.
+func (ur *UnstructuredResolver) SupportsUnderscoreExpansion() bool {
+	// Unstructured field paths typically do not support underscore matrix expansion
+	return false
 }

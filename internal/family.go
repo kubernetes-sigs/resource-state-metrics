@@ -17,6 +17,7 @@ limitations under the License.
 package internal
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -227,7 +228,7 @@ func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) 
 func (f *FamilyType) buildMetricStringFromStarlark(unstr *unstructured.Unstructured) (string, int64) {
 	logger := f.logger.WithValues("family", f.Name)
 
-	families, err := f.starlarkResolver.Resolve(unstr.Object)
+	families, err := f.starlarkResolver.ResolveComposite(context.Background(), "", unstr.Object)
 	if err != nil {
 		logger.V(1).Error(err, "Starlark generation failed")
 
@@ -296,7 +297,12 @@ func inheritMetricLabels(f *FamilyType, metric *v1alpha1.Metric) []v1alpha1.Labe
 //   - ("", false, nil): empty result (e.g. guarded CEL expression) — skip silently
 //   - ("", false, err): resolution failed — caller should log
 func resolveMetricValue(resolverInstance resolver.Resolver, valueExpr string, obj map[string]any, resolvedExpandedLabelSet map[string][]string) (string, bool, error) {
-	resolvedValueMap := resolverInstance.Resolve(valueExpr, obj)
+	resolvedValueMap, err := resolverInstance.ResolveScalar(context.Background(), valueExpr, obj)
+	
+	// Fallback for resolvers that return an error on literals (like Unstructured resolver)
+	if err != nil && len(resolvedValueMap) == 0 {
+		resolvedValueMap = map[string]string{valueExpr: valueExpr}
+	}
 
 	// An empty map means the expression evaluated successfully but
 	// produced no results (e.g. an empty list from a guarded CEL
@@ -331,7 +337,13 @@ func resolveLabels(labels []v1alpha1.Label, resolverInstance resolver.Resolver, 
 	)
 
 	for _, label := range labels {
-		resolvedLabelset := resolverInstance.Resolve(label.Value, obj)
+		resolvedLabelset, err := resolverInstance.ResolveScalar(context.Background(), label.Value, obj)
+		
+		// Fallback for resolvers that return an error on literals (like Unstructured resolver)
+		if err != nil && len(resolvedLabelset) == 0 {
+			resolvedLabelset = map[string]string{label.Value: label.Value}
+		}
+
 		// If the query is found in the resolved labelset, it means we are dealing with non-composite value(s).
 		// For e.g., consider:
 		// * `name: o.metadata.name` -> `o.metadata.name: foo`

@@ -16,6 +16,7 @@ limitations under the License.
 package resolver
 
 import (
+	"context"
 	"strconv"
 	"testing"
 	"time"
@@ -119,30 +120,22 @@ func TestNewCELResolver_Resolve(t *testing.T) {
 		{
 			name:  "error traversing obj",
 			query: "o.fields.string.bar",
-			want: map[string]string{
-				"o.fields.string.bar": "o.fields.string.bar",
-			},
+			want:  nil,
 		},
 		{
 			name:  "field does not exist",
 			query: "o.fields.bar",
-			want: map[string]string{
-				"o.fields.bar": "o.fields.bar",
-			},
+			want:  nil,
 		},
 		{
 			name:  "intermediate field does not exist",
 			query: "o.fields.fake.string",
-			want: map[string]string{
-				"o.fields.fake.string": "o.fields.fake.string",
-			},
+			want:  nil,
 		},
 		{
 			name:  "intermediate field is null", // happens easily in YAML
 			query: "o.fields.nil.foo",
-			want: map[string]string{
-				"o.fields.nil.foo": "o.fields.nil.foo",
-			},
+			want:  nil,
 		},
 	}
 
@@ -152,7 +145,8 @@ func TestNewCELResolver_Resolve(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := cr.Resolve(tt.query, unstructuredObjectMap); !cmp.Equal(got, tt.want) {
+			got, _ := cr.ResolveScalar(context.Background(), tt.query, unstructuredObjectMap)
+			if !cmp.Equal(got, tt.want) {
 				t.Errorf("%s", cmp.Diff(got, tt.want))
 			}
 		})
@@ -190,7 +184,7 @@ func TestCELResolver_UnixSeconds(t *testing.T) {
 			name:  "invalid timestamp returns error",
 			obj:   map[string]any{"timestamp": "not-a-timestamp"},
 			query: `unixSeconds(o.timestamp)`,
-			want:  map[string]string{`unixSeconds(o.timestamp)`: `unixSeconds(o.timestamp)`},
+			want:  nil,
 		},
 	}
 
@@ -200,7 +194,8 @@ func TestCELResolver_UnixSeconds(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := cr.Resolve(tt.query, tt.obj); !cmp.Equal(got, tt.want) {
+			got, _ := cr.ResolveScalar(context.Background(), tt.query, tt.obj)
+			if !cmp.Equal(got, tt.want) {
 				t.Errorf("%s", cmp.Diff(got, tt.want))
 			}
 		})
@@ -250,7 +245,7 @@ func TestCELResolver_Quantity(t *testing.T) {
 			name:  "invalid quantity returns error",
 			obj:   map[string]any{"cpu": "not-a-quantity"},
 			query: `quantity(o.cpu)`,
-			want:  map[string]string{`quantity(o.cpu)`: `quantity(o.cpu)`},
+			want:  nil,
 		},
 	}
 
@@ -260,7 +255,8 @@ func TestCELResolver_Quantity(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := cr.Resolve(tt.query, tt.obj); !cmp.Equal(got, tt.want) {
+			got, _ := cr.ResolveScalar(context.Background(), tt.query, tt.obj)
+			if !cmp.Equal(got, tt.want) {
 				t.Errorf("%s", cmp.Diff(got, tt.want))
 			}
 		})
@@ -276,7 +272,7 @@ func TestCELResolver_Now(t *testing.T) {
 		t.Parallel()
 
 		before := time.Now().Unix()
-		got := resolver.Resolve(`now()`, map[string]any{})
+		got, _ := resolver.ResolveScalar(context.Background(), `now()`, map[string]any{})
 		after := time.Now().Unix()
 
 		if len(got) != 1 {
@@ -301,7 +297,7 @@ func TestCELResolver_Now(t *testing.T) {
 	t.Run("compute duration since transition", func(t *testing.T) {
 		t.Parallel()
 
-		got := resolver.Resolve(`now() - unixSeconds(o.timestamp)`, map[string]any{"timestamp": "2024-01-15T10:30:00Z"})
+		got, _ := resolver.ResolveScalar(context.Background(), `now() - unixSeconds(o.timestamp)`, map[string]any{"timestamp": "2024-01-15T10:30:00Z"})
 		if len(got) != 1 {
 			t.Fatalf("expected 1 result, got %d", len(got))
 		}
@@ -355,7 +351,8 @@ func TestCELResolver_LabelPrefix(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := cr.Resolve(tt.query, tt.obj); !cmp.Equal(got, tt.want) {
+			got, _ := cr.ResolveScalar(context.Background(), tt.query, tt.obj)
+			if !cmp.Equal(got, tt.want) {
 				t.Errorf("%s", cmp.Diff(got, tt.want))
 			}
 		})

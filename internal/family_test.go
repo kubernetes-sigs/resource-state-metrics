@@ -16,6 +16,7 @@ limitations under the License.
 package internal
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -346,8 +347,20 @@ type fakeResolver struct {
 	result map[string]string
 }
 
-func (f fakeResolver) Resolve(_ string, _ map[string]interface{}) map[string]string {
-	return f.result
+func (f fakeResolver) ResolveScalar(_ context.Context, _ string, _ map[string]interface{}) (map[string]string, error) {
+	return f.result, nil
+}
+
+func (f fakeResolver) ResolveComposite(_ context.Context, _ string, _ map[string]interface{}) ([]resolver.ResolvedFamily, error) {
+	return nil, nil
+}
+
+func (f fakeResolver) SanitizeKey(key string) string {
+	return key
+}
+
+func (f fakeResolver) SupportsUnderscoreExpansion() bool {
+	return false
 }
 
 func TestResolveMetricValue(t *testing.T) {
