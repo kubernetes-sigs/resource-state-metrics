@@ -31,8 +31,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/klog/v2"
 
-	"sigs.k8s.io/resource-state-metrics/pkg/metricutil"
-	"sigs.k8s.io/resource-state-metrics/pkg/options"
+	"github.com/kubernetes-sigs/resource-state-metrics/pkg/metricutil"
+	"github.com/kubernetes-sigs/resource-state-metrics/pkg/options"
 )
 
 var (
