@@ -27,11 +27,12 @@ import (
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
 	"github.com/google/cel-go/interpreter"
-	"github.com/kubernetes-sigs/resource-state-metrics/pkg/metricutil"
-	"github.com/kubernetes-sigs/resource-state-metrics/pkg/options"
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/klog/v2"
+
+	"github.com/kubernetes-sigs/resource-state-metrics/pkg/metricutil"
+	"github.com/kubernetes-sigs/resource-state-metrics/pkg/options"
 )
 
 var (
@@ -52,6 +53,7 @@ type CELResolver struct {
 
 // CELResolver implements the Resolver interface.
 var _ Resolver = &CELResolver{}
+
 // NewCELResolver returns a new limits-aware CEL resolver.
 func NewCELResolver(logger klog.Logger, costLimit uint64, timeout time.Duration, celEvaluations *prometheus.CounterVec, rmmNamespace, rmmName, familyName string) *CELResolver {
 	return &CELResolver{
@@ -157,6 +159,7 @@ func (cr *CELResolver) ResolveComposite(ctx context.Context, query string, obj m
 	case <-ctx.Done():
 		err := fmt.Errorf("CEL query exceeded timeout of %v", cr.timeout)
 		logger.Error(err, "ignoring resolution for query")
+
 		if cr.expressionEvaluationMetric != nil {
 			cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "timeout").Inc()
 		}

@@ -68,7 +68,7 @@ func (ur *UnstructuredResolver) ResolveComposite(ctx context.Context, query stri
 
 	// Type assertion to convert interface{} safely into map[string]string
 	labels := make(map[string]string)
-	
+
 	if mapRes, ok := gotResolved.(map[string]interface{}); ok {
 		for k, v := range mapRes {
 			labels[k] = fmt.Sprintf("%v", v)
