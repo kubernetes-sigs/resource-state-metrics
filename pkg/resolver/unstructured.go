@@ -94,7 +94,7 @@ func (r *UnstructuredResolver) ResolveScalar(ctx context.Context, query string, 
 	fields := strings.Split(query, ".")
 	val, found, err := unstructured.NestedFieldNoCopy(obj, fields...)
 	if err != nil || !found || val == nil {
-		return nil, fmt.Errorf("field %q not found or error traversing: %v", query, err)
+		return nil, fmt.Errorf("field %q not found or error traversing: %w", query, err)
 	}
 
 	// Safely format integers, floats, and booleans to strings to satisfy the interface

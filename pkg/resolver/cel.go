@@ -53,6 +53,12 @@ type CELResolver struct {
 // CELResolver implements the Resolver interface.
 var _ Resolver = &CELResolver{}
 
+// SupportsUnderscoreExpansion indicates if this resolver supports expanding underscores.
+func (cr *CELResolver) SupportsUnderscoreExpansion() bool {
+	// Return true or false based on how you want the CEL engine to handle underscores
+	return false
+}
+
 // NewCELResolver returns a new limits-aware CEL resolver.
 func NewCELResolver(logger klog.Logger, costLimit uint64, timeout time.Duration, celEvaluations *prometheus.CounterVec, rmmNamespace, rmmName, familyName string) *CELResolver {
 	return &CELResolver{
@@ -120,6 +126,7 @@ func (cr *CELResolver) ResolveComposite(ctx context.Context, query string, obj m
 			if cr.expressionEvaluationMetric != nil {
 				cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "error").Inc()
 			}
+			
 			return nil, res.err
 		}
 
@@ -471,10 +478,4 @@ func (cr *CELResolver) SanitizeKey(key string) string {
 	// If you have specific regex replacements for Prometheus labels, put them here.
 	// Otherwise, a simple pass-through is fine to satisfy the interface.
 	return key
-}
-
-// SupportsUnderscoreExpansion indicates if this resolver supports expanding underscores.
-func (cr *CELResolver) SupportsUnderscoreExpansion() bool {
-	// Return true or false based on how you want the CEL engine to handle underscores
-	return false
 }
