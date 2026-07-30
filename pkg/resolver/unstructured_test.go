@@ -115,7 +115,7 @@ func TestUnstructuredResolver_Resolve(t *testing.T) {
 			want:  nil,
 		},
 		{
-			name:  "intermediate field is null", 
+			name:  "intermediate field is null",
 			query: "fields.nil.foo",
 			want:  nil,
 		},

@@ -298,7 +298,7 @@ func inheritMetricLabels(f *FamilyType, metric *v1alpha1.Metric) []v1alpha1.Labe
 //   - ("", false, err): resolution failed — caller should log
 func resolveMetricValue(resolverInstance resolver.Resolver, valueExpr string, obj map[string]any, resolvedExpandedLabelSet map[string][]string) (string, bool, error) {
 	resolvedValueMap, err := resolverInstance.ResolveScalar(context.Background(), valueExpr, obj)
-	
+
 	// Fallback for resolvers that return an error on literals (like Unstructured resolver)
 	if err != nil && len(resolvedValueMap) == 0 {
 		resolvedValueMap = map[string]string{valueExpr: valueExpr}
@@ -338,7 +338,7 @@ func resolveLabels(labels []v1alpha1.Label, resolverInstance resolver.Resolver, 
 
 	for _, label := range labels {
 		resolvedLabelset, err := resolverInstance.ResolveScalar(context.Background(), label.Value, obj)
-		
+
 		// Fallback for resolvers that return an error on literals (like Unstructured resolver)
 		if err != nil && len(resolvedLabelset) == 0 {
 			resolvedLabelset = map[string]string{label.Value: label.Value}

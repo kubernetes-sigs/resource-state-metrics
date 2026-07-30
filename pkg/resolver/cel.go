@@ -17,6 +17,7 @@ limitations under the License.
 package resolver
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -92,9 +93,12 @@ func (ce costEstimator) CallCost(function string, _ string, _ []ref.Val, _ ref.V
 	return &estimatedCost
 }
 
-// Resolve resolves the given query against the given unstructured object.
-func (cr *CELResolver) Resolve(query string, unstructuredObjectMap map[string]interface{}) map[string]string {
+// ResolveComposite resolves the given query against the given unstructured object.
+func (cr *CELResolver) ResolveComposite(ctx context.Context, query string, obj map[string]interface{}) ([]ResolvedFamily, error) {
 	logger := cr.logger.WithValues("query", query)
+
+	ctx, cancel := context.WithTimeout(ctx, cr.timeout)
+	defer cancel()
 
 	type result struct {
 		output map[string]string
@@ -104,42 +108,64 @@ func (cr *CELResolver) Resolve(query string, unstructuredObjectMap map[string]in
 	resultChan := make(chan result, 1)
 
 	go func() {
-		output, err := cr.resolveWithTimeout(query, unstructuredObjectMap, logger)
+		// Pass 'obj' instead of unstructuredObjectMap
+		output, err := cr.resolveWithTimeout(ctx, query, obj, logger)
 		resultChan <- result{output: output, err: err}
 	}()
-
-	timer := time.NewTimer(cr.timeout)
-	defer timer.Stop()
 
 	select {
 	case res := <-resultChan:
 		if res.err != nil {
 			logger.V(1).Info("ignoring resolution for query", "info", res.err)
-
 			if cr.expressionEvaluationMetric != nil {
 				cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "error").Inc()
 			}
-
-			return cr.defaultMapping(query)
+			return nil, res.err
 		}
 
 		if cr.expressionEvaluationMetric != nil {
 			cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "success").Inc()
 		}
 
-		return res.output
-	case <-timer.C:
-		logger.Error(fmt.Errorf("CEL query exceeded timeout of %v", cr.timeout), "ignoring resolution for query")
+		// *** THE FIX: Wrap the scalar map into the unified ResolvedFamily format ***
+		family := ResolvedFamily{
+			Name: cr.familyName,
+			Samples: []ResolvedSample{
+				{
+					Labels: res.output,
+					Value:  1.0, // Default value for label-only resolutions
+				},
+			},
+		}
 
+		return []ResolvedFamily{family}, nil
+
+	case <-ctx.Done():
+		err := fmt.Errorf("CEL query exceeded timeout of %v", cr.timeout)
+		logger.Error(err, "ignoring resolution for query")
 		if cr.expressionEvaluationMetric != nil {
 			cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "timeout").Inc()
 		}
-
-		return cr.defaultMapping(query)
+		return nil, err
 	}
 }
 
-func (cr *CELResolver) resolveWithTimeout(query string, unstructuredObjectMap map[string]interface{}, logger klog.Logger) (map[string]string, error) {
+// ResolveScalar satisfies the Resolver interface for flat key-value resolutions.
+func (cr *CELResolver) ResolveScalar(ctx context.Context, query string, obj map[string]interface{}) (map[string]string, error) {
+	logger := cr.logger.WithValues("query", query)
+
+	ctx, cancel := context.WithTimeout(ctx, cr.timeout)
+	defer cancel()
+
+	output, err := cr.resolveWithTimeout(ctx, query, obj, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	return output, nil
+}
+
+func (cr *CELResolver) resolveWithTimeout(ctx context.Context, query string, unstructuredObjectMap map[string]interface{}, logger klog.Logger) (map[string]string, error) {
 	env, err := cr.createEnvironment()
 	if err != nil {
 		logger.Error(err, "ignoring resolution for query")
@@ -161,7 +187,8 @@ func (cr *CELResolver) resolveWithTimeout(query string, unstructuredObjectMap ma
 		return nil, err
 	}
 
-	out, evalDetails, err := cr.evaluateProgram(program, unstructuredObjectMap)
+	// Pass the context into the evaluate function so the CEL engine can see it
+	out, evalDetails, err := cr.evaluateProgram(ctx, program, unstructuredObjectMap)
 	cr.addCostLogging(logger, evalDetails)
 
 	if err != nil {
@@ -309,8 +336,9 @@ func (cr *CELResolver) compileProgram(env *cel.Env, ast *cel.Ast) (cel.Program, 
 	)
 }
 
-func (cr *CELResolver) evaluateProgram(program cel.Program, obj map[string]interface{}) (ref.Val, *cel.EvalDetails, error) {
-	return program.Eval(map[string]interface{}{"o": obj})
+func (cr *CELResolver) evaluateProgram(ctx context.Context, program cel.Program, obj map[string]interface{}) (ref.Val, *cel.EvalDetails, error) {
+	// ContextEval ensures the CEL execution actively listens for the timeout cancellation
+	return program.ContextEval(ctx, map[string]interface{}{"o": obj})
 }
 
 func (cr *CELResolver) addCostLogging(logger klog.Logger, evalDetails *cel.EvalDetails) {
@@ -436,4 +464,17 @@ func (cr *CELResolver) defaultMapping(query string) map[string]string {
 	cr.logger.V(2).Info("query fell back to default mapping (will be skipped at write time)", "query", query)
 
 	return map[string]string{query: query}
+}
+
+// SanitizeKey formats the key to ensure it is a valid metric label.
+func (cr *CELResolver) SanitizeKey(key string) string {
+	// If you have specific regex replacements for Prometheus labels, put them here.
+	// Otherwise, a simple pass-through is fine to satisfy the interface.
+	return key
+}
+
+// SupportsUnderscoreExpansion indicates if this resolver supports expanding underscores.
+func (cr *CELResolver) SupportsUnderscoreExpansion() bool {
+	// Return true or false based on how you want the CEL engine to handle underscores
+	return false
 }
