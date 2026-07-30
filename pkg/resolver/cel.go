@@ -50,8 +50,6 @@ type CELResolver struct {
 	familyName                 string
 }
 
-// CELResolver implements the Resolver interface.
-var _ Resolver = &CELResolver{}
 
 // SanitizeKey formats the key to ensure it is a valid metric label.
 func (cr *CELResolver) SanitizeKey(key string) string {
@@ -60,12 +58,8 @@ func (cr *CELResolver) SanitizeKey(key string) string {
 	return key
 }
 
-// SupportsUnderscoreExpansion indicates if this resolver supports expanding underscores.
-func (cr *CELResolver) SupportsUnderscoreExpansion() bool {
-	// Return true or false based on how you want the CEL engine to handle underscores
-	return false
-}
-
+// CELResolver implements the Resolver interface.
+var _ Resolver = &CELResolver{}
 // NewCELResolver returns a new limits-aware CEL resolver.
 func NewCELResolver(logger klog.Logger, costLimit uint64, timeout time.Duration, celEvaluations *prometheus.CounterVec, rmmNamespace, rmmName, familyName string) *CELResolver {
 	return &CELResolver{
@@ -77,6 +71,12 @@ func NewCELResolver(logger klog.Logger, costLimit uint64, timeout time.Duration,
 		managedRMMName:             rmmName,
 		familyName:                 familyName,
 	}
+}
+
+// SupportsUnderscoreExpansion indicates if this resolver supports expanding underscores.
+func (cr *CELResolver) SupportsUnderscoreExpansion() bool {
+	// Return true or false based on how you want the CEL engine to handle underscores
+	return false
 }
 
 // costEstimator helps estimate the runtime cost of CEL queries.
@@ -159,7 +159,7 @@ func (cr *CELResolver) ResolveComposite(ctx context.Context, query string, obj m
 		err := fmt.Errorf("CEL query exceeded timeout of %v", cr.timeout)
 		logger.Error(err, "ignoring resolution for query")
 		if cr.expressionEvaluationMetric != nil {
-
+			
 			cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "timeout").Inc()
 		}
 		return nil, err
