@@ -189,16 +189,43 @@ func (c *Controller) processAddOrUpdate(ctx context.Context, stores *sync.Map, _
 }
 
 func (c *Controller) processDelete(stores *sync.Map, resource *v1alpha1.ResourceMetricsMonitor) error {
-	stores.Delete(resource.GetUID())
-	c.resourcesMonitored.DeleteLabelValues(resource.GetNamespace(), resource.GetName())
+	namespace := resource.GetNamespace()
+	name := resource.GetName()
 
-	// Clean up cardinality tracking
+	// Load stores before removing the entry so we can clean up per-store and
+	// per-family Prometheus label sets. These GaugeVec children are never
+	// removed automatically; without explicit deletion they accumulate for
+	// every RMM that is created and deleted, growing the registry without bound.
+	if storesI, ok := stores.Load(resource.GetUID()); ok {
+		if storeList, ok := storesI.([]*StoreType); ok {
+			for _, store := range storeList {
+				storeID := store.GetStoreIdentifier()
+
+				c.storeCardinality.DeleteLabelValues(namespace, name, storeID)
+				c.storeCardinalityLimit.DeleteLabelValues(namespace, name, storeID)
+				c.duplicateStores.DeleteLabelValues(namespace, name, storeID)
+
+				for i := range store.Families {
+					familyName := store.Families[i].Name
+					c.familyCardinality.DeleteLabelValues(namespace, name, "", familyName)
+					c.familyCardinalityLimit.DeleteLabelValues(namespace, name, "", familyName)
+					c.duplicateFamilies.DeleteLabelValues(namespace, name, familyName)
+				}
+			}
+		}
+	}
+
+	stores.Delete(resource.GetUID())
+	c.resourcesMonitored.DeleteLabelValues(namespace, name)
+
+	// Clean up per-resource Prometheus label sets.
+	c.resourceCardinality.DeleteLabelValues(namespace, name)
+	c.resourceCardinalityLimit.DeleteLabelValues(namespace, name)
+
+	// Clean up cardinality tracking.
 	c.globalCardinalityManager.DeleteResource(resource.GetUID())
 
-	// Clean up cardinality metrics
-	c.resourceCardinality.DeleteLabelValues(resource.GetNamespace(), resource.GetName())
-
-	// Update global cardinality metric
+	// Update global cardinality metric.
 	c.globalCardinality.Set(float64(c.globalCardinalityManager.GetGlobalTotal()))
 
 	return nil
