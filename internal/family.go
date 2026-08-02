@@ -114,6 +114,7 @@ type FamilyType struct {
 	createdAt           time.Time
 	cutoff              atomic.Bool
 	starlarkResolver    *resolver.StarlarkResolver
+	storeLabels         []v1alpha1.Label
 }
 
 // SetCutoff sets the cutoff state for this family.
@@ -241,17 +242,27 @@ func (f *FamilyType) buildMetricStringFromStarlark(unstr *unstructured.Unstructu
 	familyRawBuilder := getBuilder()
 	defer putBuilder(familyRawBuilder)
 
+	// Combine store and family level static labels
+	baseLabels := mergeLabels(f.storeLabels, f.Labels, nil)
+
 	var sampleCount int64
 
 	for _, genFamily := range families {
 		for _, sample := range genFamily.Samples {
 			familyRawBuilder.WriteString(kubeCustomResourcePrefix + f.Name)
 
-			// Build label string
-			var labelKeys, labelValues []string
+			// Convert Starlark script sample labels to v1alpha1.Label slice
+			var sampleLabels []v1alpha1.Label
 			for k, v := range sample.Labels {
-				labelKeys = append(labelKeys, sanitizeKey(k))
-				labelValues = append(labelValues, v)
+				sampleLabels = append(sampleLabels, v1alpha1.Label{Name: k, Value: v})
+			}
+
+			effectiveLabels := mergeLabels(baseLabels, nil, sampleLabels)
+
+			var labelKeys, labelValues []string
+			for _, lbl := range effectiveLabels {
+				labelKeys = append(labelKeys, sanitizeKey(lbl.Name))
+				labelValues = append(labelValues, lbl.Value)
 			}
 
 			sortLabels(labelKeys, labelValues)
@@ -282,9 +293,39 @@ func (f *FamilyType) buildMetricStringFromStarlark(unstr *unstructured.Unstructu
 	return familyRawBuilder.String(), sampleCount
 }
 
-// inheritMetricAttributes applies family-level labels to the metric.
+// mergeLabels combines label slices from Store, Family, and Metric scopes with key deduplication and precedence:
+// Metric-level labels override Family-level labels, which override Store-level labels for identical label names.
+// The returned slice is freshly allocated and neither input slice is mutated.
+func mergeLabels(storeLabels, familyLabels, metricLabels []v1alpha1.Label) []v1alpha1.Label {
+	totalLen := len(storeLabels) + len(familyLabels) + len(metricLabels)
+	if totalLen == 0 {
+		return nil
+	}
+
+	merged := make([]v1alpha1.Label, 0, totalLen)
+	seen := make(map[string]int, totalLen)
+
+	addOrOverride := func(lbls []v1alpha1.Label) {
+		for _, lbl := range lbls {
+			if idx, exists := seen[lbl.Name]; exists {
+				merged[idx] = lbl
+			} else {
+				seen[lbl.Name] = len(merged)
+				merged = append(merged, lbl)
+			}
+		}
+	}
+
+	addOrOverride(storeLabels)
+	addOrOverride(familyLabels)
+	addOrOverride(metricLabels)
+
+	return merged
+}
+
+// inheritMetricLabels combines store, family, and metric level labels with precedence & deduplication.
 func inheritMetricLabels(f *FamilyType, metric *v1alpha1.Metric) []v1alpha1.Label {
-	return append(metric.Labels, f.Labels...)
+	return mergeLabels(f.storeLabels, f.Labels, metric.Labels)
 }
 
 // resolveMetricValue resolves the value expression for a single metric. If the
@@ -479,6 +520,14 @@ func extractAndSortExpandedMetricValues(expanded map[string][]string, logger klo
 		logger.V(1).Info("Mismatch in expanded label and value counts, skipping expanded label sorting", "labelCount", len(anchor), "valueCount", len(expandedValues))
 
 		return expandedValues
+	}
+
+	for k, slice := range expanded {
+		if len(slice) != len(anchor) {
+			logger.V(1).Info("Mismatch in expanded label array lengths, skipping expanded label sorting", "key", k, "keyCount", len(slice), "anchorCount", len(anchor))
+
+			return expandedValues
+		}
 	}
 
 	parallel := make([][]string, 0, len(expanded)+1)
