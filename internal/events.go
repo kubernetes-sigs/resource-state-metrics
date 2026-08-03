@@ -288,22 +288,26 @@ func (c *Controller) updateMetadata(ctx context.Context, resource *v1alpha1.Reso
 
 // cardinalityAggregation holds aggregated cardinality data from stores.
 type cardinalityAggregation struct {
-	totalCardinality int64
-	perStore         map[string]int64
-	perStoreLimit    map[string]int64
-	perFamily        map[string]int64
-	perFamilyLimit   map[string]int64
-	cutoffFamilies   []string
-	violations       []ThresholdViolation
+	totalCardinality    int64
+	perStore            map[string]int64
+	perStoreLimit       map[string]int64
+	perFamily           map[string]int64
+	perFamilyLimit      map[string]int64
+	perStoreFamily      map[string]map[string]int64
+	perStoreFamilyLimit map[string]map[string]int64
+	cutoffFamilies      []string
+	violations          []ThresholdViolation
 }
 
 // aggregateStoreCardinality aggregates cardinality data from all stores.
 func (c *Controller) aggregateStoreCardinality(stores []*StoreType, resource *v1alpha1.ResourceMetricsMonitor) cardinalityAggregation {
 	agg := cardinalityAggregation{
-		perStore:       make(map[string]int64),
-		perStoreLimit:  make(map[string]int64),
-		perFamily:      make(map[string]int64),
-		perFamilyLimit: make(map[string]int64),
+		perStore:            make(map[string]int64),
+		perStoreLimit:       make(map[string]int64),
+		perFamily:           make(map[string]int64),
+		perFamilyLimit:      make(map[string]int64),
+		perStoreFamily:      make(map[string]map[string]int64),
+		perStoreFamilyLimit: make(map[string]map[string]int64),
 	}
 
 	for _, store := range stores {
@@ -318,16 +322,27 @@ func (c *Controller) aggregateStoreCardinality(stores []*StoreType, resource *v1
 		agg.totalCardinality += storeTotal
 
 		familyCards := store.cardinalityTracker.GetAllFamilyCardinalities()
+		if len(familyCards) > 0 {
+			agg.perStoreFamily[storeID] = make(map[string]int64, len(familyCards))
+		}
+
 		for family, count := range familyCards {
 			agg.perFamily[family] += count
+			agg.perStoreFamily[storeID][family] = count
 		}
 
 		familyLimits := store.cardinalityTracker.GetAllFamilyThresholds()
+		if len(familyLimits) > 0 {
+			agg.perStoreFamilyLimit[storeID] = make(map[string]int64, len(familyLimits))
+		}
+
 		for family, limit := range familyLimits {
 			// Use max if family appears in multiple stores (unusual but possible)
 			if limit > agg.perFamilyLimit[family] {
 				agg.perFamilyLimit[family] = limit
 			}
+
+			agg.perStoreFamilyLimit[storeID][family] = limit
 		}
 
 		agg.cutoffFamilies = append(agg.cutoffFamilies, store.cardinalityTracker.GetCutoffFamilies()...)
@@ -450,13 +465,16 @@ func (c *Controller) updateCardinalityMetrics(resource *v1alpha1.ResourceMetrics
 		c.storeCardinalityLimit.WithLabelValues(namespace, name, storeID).Set(float64(limit))
 	}
 
-	for family, count := range agg.perFamily {
-		// We don't have per-store breakdown for family metrics here, so use empty store label.
-		c.familyCardinality.WithLabelValues(namespace, name, "", family).Set(float64(count))
+	for storeID, families := range agg.perStoreFamily {
+		for family, count := range families {
+			c.familyCardinality.WithLabelValues(namespace, name, storeID, family).Set(float64(count))
+		}
 	}
 
-	for family, limit := range agg.perFamilyLimit {
-		c.familyCardinalityLimit.WithLabelValues(namespace, name, "", family).Set(float64(limit))
+	for storeID, families := range agg.perStoreFamilyLimit {
+		for family, limit := range families {
+			c.familyCardinalityLimit.WithLabelValues(namespace, name, storeID, family).Set(float64(limit))
+		}
 	}
 
 	c.resourceCardinality.WithLabelValues(namespace, name).Set(float64(agg.totalCardinality))
