@@ -139,7 +139,8 @@ func EnsureSafePath(path string) string {
 		panic(fmt.Sprintf("Failed to get absolute path of project directory: %v", err))
 	}
 
-	if !strings.HasPrefix(absolutePath, projectDir) {
+	relativePath, err := filepath.Rel(projectDir, absolutePath)
+	if err != nil || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
 		panic(fmt.Sprintf("Unsafe path detected: %s is outside of the project directory %s", absolutePath, projectDir))
 	}
 
