@@ -267,6 +267,155 @@ func TestCELResolver_Quantity(t *testing.T) {
 	}
 }
 
+func TestCELResolver_Int64(t *testing.T) {
+	t.Parallel()
+
+	// apimachinery decodes every JSON whole number in unstructured content as
+	// an int64, so this is the shape a resolver actually sees at runtime.
+	//
+	// replicas is the value under test. It is placed in a list position and in
+	// a map position so the two paths are compared on identical input: before
+	// the fix it resolved through the list and was dropped from the map.
+	const replicas int64 = 3
+
+	obj := map[string]interface{}{
+		"replicaHistory": []interface{}{replicas},
+		"status": map[string]interface{}{
+			"replicas": replicas,
+		},
+		// Wider coverage: several int64s in each position.
+		"ports": []interface{}{int64(80), int64(443)},
+		"limits": map[string]interface{}{
+			"cpu":    int64(2),
+			"memory": int64(512),
+		},
+	}
+	tests := []struct {
+		name  string
+		query string
+		want  map[string]string
+	}{
+		{
+			name:  "replicas inside a list",
+			query: "o.replicaHistory",
+			want: map[string]string{
+				"replicaHistory#0": "3",
+			},
+		},
+		{
+			name:  "the same replicas inside a map",
+			query: "o.status",
+			want: map[string]string{
+				"replicas": "3",
+			},
+		},
+		{
+			name:  "several int64s inside a list",
+			query: "o.ports",
+			want: map[string]string{
+				"ports#0": "80",
+				"ports#1": "443",
+			},
+		},
+		{
+			name:  "several int64s inside a map",
+			query: "o.limits",
+			want: map[string]string{
+				"cpu":    "2",
+				"memory": "512",
+			},
+		},
+	}
+
+	cr := NewCELResolver(klog.NewKlogr(), 10e5, 5*time.Second, nil, "test-ns", "test-rmm", "test-family")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := cr.Resolve(tt.query, obj); !cmp.Equal(got, tt.want) {
+				t.Errorf("%s", cmp.Diff(got, tt.want))
+			}
+		})
+	}
+}
+
+// TestCELResolver_ScalarParity pins resolveListInner and resolveMapInner to a
+// single notion of what counts as a scalar. Every candidate below is driven
+// through both, and the two must reach the same verdict and render it the same
+// way, so a case added to one switch but not the other fails here.
+//
+// The invariant here is agreement-only. This test asserts that the two
+// functions reach the same verdict on a type; it deliberately does not assert
+// which verdict is correct, so widening both switches together is a legitimate
+// change and stays green. Pinning the correct verdict for the types this
+// package actually depends on is TestCELResolver_Int64's job.
+//
+// Go cannot reflect over the cases of a type switch, so the candidate set has
+// to be written down. It covers the accepted scalars plus the adjacent numeric
+// types and nil, which is where a one-sided edit is most likely to land. Only
+// scalars belong here: []interface{} and map[string]interface{} have dedicated
+// recursion cases in both functions and so are not comparable this way.
+func TestCELResolver_ScalarParity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		value interface{}
+	}{
+		{name: "string", value: "foo"},
+		{name: "int", value: int(1)},
+		{name: "int64", value: int64(2)},
+		{name: "uint", value: uint(3)},
+		{name: "uint64", value: uint64(4)},
+		{name: "float64", value: float64(5.5)},
+		{name: "bool", value: true},
+		{name: "int8", value: int8(6)},
+		{name: "int16", value: int16(7)},
+		{name: "int32", value: int32(8)},
+		{name: "uint8", value: uint8(9)},
+		{name: "uint16", value: uint16(10)},
+		{name: "uint32", value: uint32(11)},
+		{name: "float32", value: float32(12.5)},
+		{name: "nil", value: nil}, // JSON null, the one rejected case that really occurs
+		{name: "struct", value: struct{}{}},
+	}
+
+	cr := NewCELResolver(klog.NewKlogr(), 10e5, 5*time.Second, nil, "test-ns", "test-rmm", "test-family")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assertScalarParity(t, cr, tt.value)
+		})
+	}
+}
+
+// assertScalarParity drives value through both inner resolvers and requires
+// them to agree on whether it is a scalar and, when it is, on how it renders.
+func assertScalarParity(t *testing.T, cr *CELResolver, value interface{}) {
+	t.Helper()
+
+	fromList := map[string]string{}
+	cr.resolveListInner([]interface{}{value}, fromList, "field")
+	gotList, listAccepted := fromList["field#0"]
+
+	fromMap := map[string]string{}
+	cr.resolveMapInner(map[string]interface{}{"field": value}, fromMap)
+	gotMap, mapAccepted := fromMap["field"]
+
+	if listAccepted != mapAccepted {
+		t.Fatalf("switches disagree on %T: resolveListInner accepted=%t, resolveMapInner accepted=%t",
+			value, listAccepted, mapAccepted)
+	}
+
+	if listAccepted && gotList != gotMap {
+		t.Errorf("switches disagree on rendering %T: resolveListInner = %q, resolveMapInner = %q",
+			value, gotList, gotMap)
+	}
+}
+
 func TestCELResolver_Now(t *testing.T) {
 	t.Parallel()
 
