@@ -40,6 +40,7 @@ type StoreType struct {
 	celTimeout   time.Duration
 
 	cardinalityTracker *CardinalityTracker
+	resourceCutoff     atomic.Bool
 
 	// synced is set to true after the reflector completes its initial list
 	// via Replace, indicating that all pre-existing objects have been added.
@@ -182,6 +183,16 @@ func (s *StoreType) GetStoreIdentifier() string {
 	return s.Group + "/" + s.Version + "/" + s.Kind
 }
 
+// SetResourceCutoff sets whether this store's parent resource or global controller is cut off.
+func (s *StoreType) SetResourceCutoff(cutoff bool) {
+	s.resourceCutoff.Store(cutoff)
+}
+
+// IsResourceCutoff returns whether this store's parent resource or global controller is cut off.
+func (s *StoreType) IsResourceCutoff() bool {
+	return s.resourceCutoff.Load()
+}
+
 func convertToUnstructured(obj interface{}) (*unstructured.Unstructured, error) {
 	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
 	if err != nil {
@@ -234,8 +245,9 @@ func (s *StoreType) checkAndApplyThresholds() []ThresholdViolation {
 
 	violations := s.cardinalityTracker.CheckThresholds()
 
+	resCutoff := s.IsResourceCutoff()
 	for _, family := range s.Families {
-		cutoff := s.cardinalityTracker.IsFamilyCutoff(family.Name)
+		cutoff := resCutoff || s.cardinalityTracker.IsFamilyCutoff(family.Name)
 		family.SetCutoff(cutoff)
 	}
 
