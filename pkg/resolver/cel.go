@@ -174,13 +174,13 @@ func (cr *CELResolver) resolveWithTimeout(query string, unstructuredObjectMap ma
 
 var (
 	celEnv     *cel.Env
-	celEnvErr  error
+	errCELEnv  error
 	celEnvOnce sync.Once
 )
 
 func getCELEnv() (*cel.Env, error) {
 	celEnvOnce.Do(func() {
-		celEnv, celEnvErr = cel.NewEnv(
+		celEnv, errCELEnv = cel.NewEnv(
 			cel.CrossTypeNumericComparisons(true),
 			cel.DefaultUTCTimeZone(true),
 			cel.EagerlyValidateDeclarations(true),
@@ -214,7 +214,8 @@ func getCELEnv() (*cel.Env, error) {
 			),
 		)
 	})
-	return celEnv, celEnvErr
+
+	return celEnv, errCELEnv
 }
 
 // unixSecondsBinding implements the logic for the unixSeconds function, which
