@@ -417,3 +417,55 @@ func TestResolveMetricValue(t *testing.T) {
 		})
 	}
 }
+
+func TestEscapeHelp(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "plain text unchanged", in: "Number of replicas.", want: "Number of replicas."},
+		{name: "empty string unchanged", in: "", want: ""},
+		{name: "single newline escaped", in: "line1\nline2", want: `line1\nline2`},
+		{name: "single backslash escaped", in: `regex \d+`, want: `regex \\d+`},
+		{name: "backslash then newline: backslash escaped first", in: "a\\\nb", want: `a\\\nb`},
+		{name: "multiple newlines all escaped", in: "a\nb\nc", want: `a\nb\nc`},
+		{name: "tab is left as-is", in: "a\tb", want: "a\tb"},
+		{name: "unicode passes through", in: "héllo → wörld", want: "héllo → wörld"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := escapeHelp(tt.in)
+			if got != tt.want {
+				t.Errorf("escapeHelp(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFamilyType_buildHeaders_escapesHelp(t *testing.T) {
+	t.Parallel()
+
+	f := &FamilyType{
+		Family: v1alpha1.Family{
+			Name: "example",
+			Help: "line1\nline2 with \\ backslash",
+		},
+	}
+
+	got := f.buildHeaders()
+	want := "# HELP kube_customresource_example line1\\nline2 with \\\\ backslash\n# TYPE kube_customresource_example gauge"
+
+	if got != want {
+		t.Errorf("buildHeaders() mismatch:\n got: %q\nwant: %q", got, want)
+	}
+
+	if strings.Count(got, "\n") != 1 {
+		t.Errorf("expected exactly one literal newline in output, got %d", strings.Count(got, "\n"))
+	}
+}
