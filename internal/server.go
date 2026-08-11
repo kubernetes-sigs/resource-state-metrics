@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -135,6 +136,50 @@ func (s *selfServer) build(ctx context.Context, client kubernetes.Interface, gat
 	}
 }
 
+func parseQuality(params []string) float64 {
+	for _, param := range params {
+		param = strings.TrimSpace(param)
+		if strings.HasPrefix(strings.ToLower(param), "q=") {
+			if q, err := strconv.ParseFloat(strings.TrimSpace(param[2:]), 64); err == nil {
+				return q
+			}
+		}
+	}
+
+	return 1.0
+}
+
+func acceptsGzip(header http.Header) bool {
+	gzipQuality := -1.0
+	starQuality := -1.0
+
+	for _, v := range header.Values("Accept-Encoding") {
+		for _, clause := range strings.Split(v, ",") {
+			clause = strings.TrimSpace(clause)
+			if clause == "" {
+				continue
+			}
+
+			parts := strings.Split(clause, ";")
+			encoding := strings.ToLower(strings.TrimSpace(parts[0]))
+			q := parseQuality(parts[1:])
+
+			switch encoding {
+			case "gzip":
+				gzipQuality = q
+			case "*":
+				starQuality = q
+			}
+		}
+	}
+
+	if gzipQuality >= 0 {
+		return gzipQuality > 0
+	}
+
+	return starQuality > 0
+}
+
 func createMetricsHandler(server *mainServer, logger klog.Logger, binarySemaphore *sync.RWMutex, generator func(w io.Writer)) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		binarySemaphore.RLock()
@@ -151,7 +196,7 @@ func createMetricsHandler(server *mainServer, logger klog.Logger, binarySemaphor
 
 		var out io.Writer = writer
 
-		if strings.Contains(request.Header.Get("Accept-Encoding"), "gzip") {
+		if acceptsGzip(request.Header) {
 			writer.Header().Set("Content-Encoding", "gzip")
 
 			gz := gzip.NewWriter(writer)

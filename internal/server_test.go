@@ -94,6 +94,30 @@ func TestMainServerGzipCompression(t *testing.T) {
 			expectGzip:     true,
 		},
 		{
+			name:           "metrics with gzip rejected q=0",
+			path:           "/metrics",
+			acceptEncoding: "gzip;q=0",
+			expectGzip:     false,
+		},
+		{
+			name:           "metrics with gzip uppercase",
+			path:           "/metrics",
+			acceptEncoding: "GZIP",
+			expectGzip:     true,
+		},
+		{
+			name:           "metrics with wildcard accept encoding",
+			path:           "/metrics",
+			acceptEncoding: "*",
+			expectGzip:     true,
+		},
+		{
+			name:           "metrics with wildcard but explicit gzip q=0",
+			path:           "/metrics",
+			acceptEncoding: "*, gzip;q=0",
+			expectGzip:     false,
+		},
+		{
 			name:           "external without gzip",
 			path:           "/external",
 			acceptEncoding: "",
