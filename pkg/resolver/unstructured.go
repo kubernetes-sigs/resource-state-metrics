@@ -29,12 +29,17 @@ type UnstructuredResolver struct {
 	logger klog.Logger
 }
 
-// UnstructuredResolver implements the Resolver interface.
-var _ Resolver = &UnstructuredResolver{}
+// UnstructuredResolver implements the ExpressionResolver interface.
+var _ ExpressionResolver = &UnstructuredResolver{}
 
 // NewUnstructuredResolver returns a new unstructured resolver.
 func NewUnstructuredResolver(logger klog.Logger) *UnstructuredResolver {
 	return &UnstructuredResolver{logger: logger}
+}
+
+// SupportsCompositeValues reports whether UnstructuredResolver supports composite values.
+func (*UnstructuredResolver) SupportsCompositeValues() bool {
+	return false
 }
 
 // Resolve resolves the given query against the given unstructured object.
