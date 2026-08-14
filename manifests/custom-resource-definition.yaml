@@ -53,21 +53,20 @@ spec:
           metadata:
             type: object
           spec:
-            description: ResourceMetricsMonitorSpec is the spec for a ResourceMetricsMonitor
-              resource.
+            description: spec defines the desired state of ResourceMetricsMonitor.
             properties:
               configuration:
-                description: Configuration is the RSM configuration that generates
+                description: configuration is the RSM configuration that generates
                   metrics.
                 properties:
                   cardinalityLimit:
-                    description: CardinalityLimit sets the maximum total cardinality
+                    description: cardinalityLimit sets the maximum total cardinality
                       for this RMM (0 means use global default).
                     format: int64
                     minimum: 0
                     type: integer
                   stores:
-                    description: Stores defines the resources to watch and the metrics
+                    description: stores defines the resources to watch and the metrics
                       to generate.
                     items:
                       description: |-
@@ -76,83 +75,92 @@ spec:
                         When using wildcards, the controller will auto-discover matching resources.
                       properties:
                         cardinalityLimit:
-                          description: CardinalityLimit sets the maximum cardinality
+                          description: cardinalityLimit sets the maximum cardinality
                             for this store (0 means use default).
                           format: int64
                           minimum: 0
                           type: integer
                         families:
-                          description: Families defines the metric families to generate
+                          description: families defines the metric families to generate
                             for this resource.
                           items:
                             description: Family represents a metric family (a group
                               of metrics with the same name).
                             properties:
                               cardinalityLimit:
-                                description: CardinalityLimit sets the maximum cardinality
+                                description: cardinalityLimit sets the maximum cardinality
                                   for this family (0 means unlimited).
                                 format: int64
                                 minimum: 0
                                 type: integer
                               help:
-                                description: Help is the help text for this metric
+                                description: help is the help text for this metric
                                   family.
+                                maxLength: 1024
                                 minLength: 1
                                 type: string
                               labels:
-                                description: Labels defines additional labels to apply
+                                description: labels defines additional labels to apply
                                   to all metrics in this family.
                                 items:
                                   description: Label directly associates a label name
                                     with its value expression.
                                   properties:
                                     name:
-                                      description: Name is the label name.
+                                      description: name is the label name.
                                       maxLength: 128
                                       minLength: 1
                                       type: string
                                     value:
-                                      description: Value is the expression to evaluate
+                                      description: value is the expression to evaluate
                                         for this label's value.
+                                      maxLength: 1024
                                       minLength: 1
                                       type: string
                                   required:
                                   - name
                                   - value
                                   type: object
+                                maxItems: 64
+                                minItems: 1
                                 type: array
+                                x-kubernetes-list-type: atomic
                               metrics:
                                 description: |-
-                                  Metrics defines the individual metrics within this family.
+                                  metrics defines the individual metrics within this family.
                                   When Starlark is set, this field is ignored.
                                 items:
                                   description: Metric represents a single time series
                                     within a family.
                                   properties:
                                     labels:
-                                      description: Labels defines the label set for
+                                      description: labels defines the label set for
                                         this metric.
                                       items:
                                         description: Label directly associates a label
                                           name with its value expression.
                                         properties:
                                           name:
-                                            description: Name is the label name.
+                                            description: name is the label name.
                                             maxLength: 128
                                             minLength: 1
                                             type: string
                                           value:
-                                            description: Value is the expression to
+                                            description: value is the expression to
                                               evaluate for this label's value.
+                                            maxLength: 1024
                                             minLength: 1
                                             type: string
                                         required:
                                         - name
                                         - value
                                         type: object
+                                      maxItems: 64
+                                      minItems: 1
                                       type: array
+                                      x-kubernetes-list-type: atomic
                                     resolver:
-                                      description: Resolver overrides the family/store
+                                      description: resolver overrides the family/store
                                         resolver for this metric.
                                       enum:
                                       - cel
@@ -161,22 +169,27 @@ spec:
                                       - ""
                                       type: string
                                     value:
-                                      description: Value is the expression to evaluate
+                                      description: value is the expression to evaluate
                                         for the metric value.
+                                      maxLength: 1024
+                                      minLength: 1
                                       type: string
                                   required:
                                   - value
                                   type: object
+                                maxItems: 128
+                                minItems: 1
                                 type: array
+                                x-kubernetes-list-type: atomic
                               name:
-                                description: Name is the metric family name (will
+                                description: name is the metric family name (will
                                   be prefixed with kube_customresource_).
                                 maxLength: 128
                                 minLength: 1
                                 pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
                                 type: string
                               resolver:
-                                description: Resolver overrides the store resolver
+                                description: resolver overrides the store resolver
                                   for this family.
                                 enum:
                                 - cel
@@ -186,19 +199,20 @@ spec:
                                 type: string
                               starlark:
                                 description: |-
-                                  Starlark configures Starlark script-based metric generation.
+                                  starlark configures Starlark script-based metric generation.
                                   When set, the script generates all samples for this family,
                                   bypassing the normal Metrics/Resolver pipeline.
                                 properties:
                                   maxSteps:
                                     description: |-
-                                      MaxSteps limits the number of Starlark execution steps (default: 100000).
+                                      maxSteps limits the number of Starlark execution steps (default: 100000).
                                       This prevents infinite loops and runaway scripts.
+                                    format: int32
                                     minimum: 1000
                                     type: integer
                                   script:
                                     description: |-
-                                      Script is the inline Starlark script source code.
+                                      script is the inline Starlark script source code.
                                       The script has access to `obj` (the resource as a dict) and built-in functions:
                                       - quantity_to_float(s): Parse Kubernetes Quantity ("100m", "1Gi") to float
                                       - time: starlark-go's time module (https://pkg.go.dev/go.starlark.net/lib/time).
@@ -212,11 +226,13 @@ spec:
                                       - label_prefix(prefix, labels): Prefix and sanitize a label dict's keys
                                       - metric(labels, value): Create a sample with labels dict and float value
                                       - family(name, help, kind, samples): Create a family with list of samples
+                                    maxLength: 65536
                                     minLength: 1
                                     type: string
                                   timeout:
-                                    description: 'Timeout is the maximum execution
+                                    description: 'timeout is the maximum execution
                                       time in seconds (default: 5, max: 60).'
+                                    format: int32
                                     maximum: 60
                                     minimum: 1
                                     type: integer
@@ -227,43 +243,53 @@ spec:
                             - help
                             - name
                             type: object
+                          maxItems: 128
                           minItems: 1
                           type: array
+                          x-kubernetes-list-type: atomic
                         group:
                           description: |-
-                            Group is the API group of the resource (empty string for core resources).
+                            group is the API group of the resource (empty string for core resources).
                             Supports "*" to match all groups.
+                          maxLength: 253
+                          minLength: 0
                           type: string
                         kind:
                           description: |-
-                            Kind is the kind of the resource.
+                            kind is the kind of the resource.
                             Supports "*" to match all kinds within the specified group/version.
+                          maxLength: 63
+                          minLength: 1
                           type: string
                         labels:
-                          description: Labels defines additional labels to apply to
+                          description: labels defines additional labels to apply to
                             all metrics in this store.
                           items:
                             description: Label directly associates a label name with
                               its value expression.
                             properties:
                               name:
-                                description: Name is the label name.
+                                description: name is the label name.
                                 maxLength: 128
                                 minLength: 1
                                 type: string
                               value:
-                                description: Value is the expression to evaluate for
+                                description: value is the expression to evaluate for
                                   this label's value.
+                                maxLength: 1024
                                 minLength: 1
                                 type: string
                             required:
                             - name
                             - value
                             type: object
+                          maxItems: 64
+                          minItems: 1
                           type: array
+                          x-kubernetes-list-type: atomic
                         resolver:
                           description: |-
-                            Resolver sets the default resolver for all families/metrics in this store.
+                            resolver sets the default resolver for all families/metrics in this store.
                             If not specified, must be set at the family or metric level.
                           enum:
                           - cel
@@ -272,31 +298,44 @@ spec:
                           - ""
                           type: string
                         resource:
-                          description: Resource is the plural resource name (e.g.
+                          description: resource is the plural resource name (e.g.
                             "deployments", "pods").
+                          maxLength: 63
+                          minLength: 1
                           type: string
                         selectors:
-                          description: Selectors defines how to filter the resources
+                          description: selectors defines how to filter the resources
                             to watch.
+                          minProperties: 1
                           properties:
                             field:
-                              description: Field is a field selector for filtering
+                              description: field is a field selector for filtering
                                 resources.
+                              maxLength: 256
+                              minLength: 1
                               type: string
                             label:
-                              description: Label is a label selector for filtering
+                              description: label is a label selector for filtering
                                 resources.
+                              maxLength: 256
+                              minLength: 1
                               type: string
                           type: object
                         version:
-                          description: Version is the API version of the resource.
+                          description: version is the API version of the resource.
                             Supports "*" to match all versions.
+                          maxLength: 64
+                          minLength: 1
                           type: string
                       required:
                       - families
+                      - kind
+                      - version
                       type: object
+                    maxItems: 128
                     minItems: 1
                     type: array
+                    x-kubernetes-list-type: atomic
                 required:
                 - stores
                 type: object
@@ -304,20 +343,25 @@ spec:
             - configuration
             type: object
           status:
-            description: ResourceMetricsMonitorStatus is the status for a ResourceMetricsMonitor
-              resource.
+            description: status defines the observed state of ResourceMetricsMonitor.
+            minProperties: 0
             properties:
               cardinality:
-                description: Cardinality tracks the cardinality metrics for this resource.
+                description: cardinality tracks the cardinality metrics for this resource.
                 properties:
                   cutoffFamilies:
-                    description: CutoffFamilies lists the families that are currently
+                    description: cutoffFamilies lists the families that are currently
                       cut off due to threshold violations.
                     items:
+                      maxLength: 128
+                      minLength: 1
                       type: string
+                    maxItems: 128
+                    minItems: 1
                     type: array
+                    x-kubernetes-list-type: atomic
                   lastUpdated:
-                    description: LastUpdated is the timestamp of the last cardinality
+                    description: lastUpdated is the timestamp of the last cardinality
                       update.
                     format: date-time
                     type: string
@@ -325,27 +369,33 @@ spec:
                     additionalProperties:
                       format: int64
                       type: integer
-                    description: PerFamily maps family names to their cardinality.
+                    description: perFamily maps family names to their cardinality.
+                    minProperties: 1
                     type: object
                   perStore:
                     additionalProperties:
                       format: int64
                       type: integer
-                    description: PerStore maps store identifiers (group/version/kind)
+                    description: perStore maps store identifiers (group/version/kind)
                       to their cardinality.
+                    minProperties: 1
                     type: object
                   thresholdsExceeded:
-                    description: ThresholdsExceeded indicates whether any cardinality
+                    description: thresholdsExceeded indicates whether any cardinality
                       threshold has been exceeded.
                     type: boolean
                   total:
-                    description: Total is the total number of time series generated
+                    description: total is the total number of time series generated
                       by this RMM.
                     format: int64
+                    minimum: 0
                     type: integer
+                required:
+                - thresholdsExceeded
+                - total
                 type: object
               conditions:
-                description: Conditions is an array of conditions associated with
+                description: conditions is an array of conditions associated with
                   the resource.
                 items:
                   description: Condition contains details for one aspect of the current
@@ -401,11 +451,15 @@ spec:
                   - status
                   - type
                   type: object
+                maxItems: 32
+                minItems: 0
                 type: array
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
             type: object
+        required:
+        - spec
         type: object
     served: true
     storage: true
