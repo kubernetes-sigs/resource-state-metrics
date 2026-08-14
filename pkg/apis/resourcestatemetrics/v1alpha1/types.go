@@ -158,7 +158,7 @@ type Metric struct {
 	// labels defines the label set for this metric.
 	// +optional
 	// +listType=atomic
-	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MinItems=0
 	// +kubebuilder:validation:MaxItems=64
 	Labels []Label `json:"labels,omitempty"`
 
@@ -192,7 +192,7 @@ type Family struct {
 	// When Starlark is set, this field is ignored.
 	// +optional
 	// +listType=atomic
-	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MinItems=0
 	// +kubebuilder:validation:MaxItems=128
 	Metrics []Metric `json:"metrics,omitempty"`
 
@@ -209,7 +209,7 @@ type Family struct {
 	// labels defines additional labels to apply to all metrics in this family.
 	// +optional
 	// +listType=atomic
-	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MinItems=0
 	// +kubebuilder:validation:MaxItems=64
 	Labels []Label `json:"labels,omitempty"`
 
@@ -284,7 +284,7 @@ type Store struct {
 	// labels defines additional labels to apply to all metrics in this store.
 	// +optional
 	// +listType=atomic
-	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MinItems=0
 	// +kubebuilder:validation:MaxItems=64
 	Labels []Label `json:"labels,omitempty"`
 
@@ -341,12 +341,12 @@ type CardinalityStatus struct {
 
 	// perStore maps store identifiers (group/version/kind) to their cardinality.
 	// +optional
-	// +kubebuilder:validation:MinProperties=1
+	// +kubebuilder:validation:MinProperties=0
 	PerStore map[string]int64 `json:"perStore,omitempty"`
 
 	// perFamily maps family names to their cardinality.
 	// +optional
-	// +kubebuilder:validation:MinProperties=1
+	// +kubebuilder:validation:MinProperties=0
 	PerFamily map[string]int64 `json:"perFamily,omitempty"`
 
 	// thresholdsExceeded indicates whether any cardinality threshold has been exceeded.
@@ -356,7 +356,7 @@ type CardinalityStatus struct {
 	// cutoffFamilies lists the families that are currently cut off due to threshold violations.
 	// +optional
 	// +listType=atomic
-	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MinItems=0
 	// +kubebuilder:validation:MaxItems=128
 	// +kubebuilder:validation:items:MinLength=1
 	// +kubebuilder:validation:items:MaxLength=128
