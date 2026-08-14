@@ -159,6 +159,85 @@ func TestNewCELResolver_Resolve(t *testing.T) {
 	}
 }
 
+func TestCELResolver_Composite(t *testing.T) {
+	t.Parallel()
+
+	unstructuredObjectMap := map[string]interface{}{
+		"spec": map[string]interface{}{
+			"containers": []interface{}{
+				map[string]interface{}{"name": "nginx", "image": "nginx:1.0"},
+				map[string]interface{}{"name": "sidecar", "image": "sidecar:2.0"},
+			},
+			"tags": []interface{}{"a", "b", "c"},
+		},
+		"config": map[string]interface{}{
+			"ports": []interface{}{8080, 9090},
+		},
+	}
+	tests := []struct {
+		name  string
+		query string
+		want  map[string]string
+	}{
+		{
+			name:  "list of scalars uses list_name#index keys",
+			query: "o.spec.tags",
+			want: map[string]string{
+				"tags#0": "a",
+				"tags#1": "b",
+				"tags#2": "c",
+			},
+		},
+		{
+			name:  "map() over list of scalars uses list_name#index keys",
+			query: "o.spec.tags.map(x, x)",
+			want: map[string]string{
+				"tags#0": "a",
+				"tags#1": "b",
+				"tags#2": "c",
+			},
+		},
+		{
+			name:  "map() over list of maps to a scalar field uses list_name#index keys",
+			query: "o.spec.containers.map(c, c.image)",
+			want: map[string]string{
+				"containers#0": "nginx:1.0",
+				"containers#1": "sidecar:2.0",
+			},
+		},
+		{
+			name:  "map inside a map flattens scalar values",
+			query: "o.config",
+			want: map[string]string{
+				"ports#0": "8080",
+				"ports#1": "9090",
+			},
+		},
+		{
+			name:  "list of maps is skipped to avoid colliding keys",
+			query: "o.spec.containers",
+			want:  map[string]string{},
+		},
+		{
+			name:  "filter() over list of maps is skipped to avoid colliding keys",
+			query: "o.spec.containers.filter(c, c.name == 'nginx')",
+			want:  map[string]string{},
+		},
+	}
+
+	cr := NewCELResolver(klog.NewKlogr(), 10e5, 5*time.Second, nil, "test-ns", "test-rmm", "test-family")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := cr.Resolve(tt.query, unstructuredObjectMap); !cmp.Equal(got, tt.want) {
+				t.Errorf("%s", cmp.Diff(got, tt.want))
+			}
+		})
+	}
+}
+
 func TestCELResolver_UnixSeconds(t *testing.T) {
 	t.Parallel()
 
