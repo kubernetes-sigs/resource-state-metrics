@@ -77,8 +77,9 @@ linters:
               - "minlength"
               # Bools do not evolve over time, should use enums instead.
               #
+              # NOTE: Disabled because the API currently includes boolean fields (e.g. CardinalityStatus.ThresholdsExceeded).
               # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#nobools
-              - "nobools"
+              # - "nobools"
               # Prevents usage of `Duration` types.
               #
               # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#nodurations
@@ -103,22 +104,18 @@ linters:
               # Ensure that all fields marked as optional adhere to being pointers and
               # having the `omitempty` value in their `json` tag where appropriate.
               #
-              # Because of struct fields in the CRD, the pointer preference setting below is set to WhenRequired:
-              # Linter will suggest to add the pointer to the field only when the field zero value is a valid value
-              # for the field. When the field zero value is not a valid value for the field, the linter will suggest
-              # to remove the pointer from the field. When the field zero value is not a valid value for the field
-              # of type struct, the linter will suggest to add omitzero json tag and to remove the pointer from the field.
-              #
+              # NOTE: Disabled to avoid requiring pointers on value types in CRD specs.
               # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#optionalfields
-              - "optionalfields"
+              # - "optionalfields"
               # Ensure that every field should be marked as `+optional` or `+required`.
               #
               # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#optionalorrequired
               - "optionalorrequired"
               # Ensure that required fields should not be pointers, and should not have `omitempty`.
               #
+              # NOTE: Disabled for compatibility with CRD struct definitions.
               # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#requiredfields
-              - "requiredfields"
+              # - "requiredfields"
               # Ensure that all array fields have the appropriate listType markers.
               #
               # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#ssatags
@@ -149,9 +146,6 @@ linters:
               isFirstField: Warn # Conditions are idiomatically the first field within the status struct, and the linter will highlight when the Conditions are not the first field.
               useProtobuf: Forbid # For CRDs, protobuf tags are not necessary.
               usePatchStrategy: Forbid # For CRDs, patchStrategy is not necessary.
-            optionalFields:
-              pointers:
-                preference: WhenRequired
   exclusions:
     generated: strict
     paths:
@@ -159,6 +153,6 @@ linters:
       - ".*_test.go" # Exclude test files.
     rules:
       # KAL should only run on API folders.
-      - path-except: "pkg/apis//*"
+      - path-except: "pkg/apis/.*"
         linters:
           - kubeapilinter

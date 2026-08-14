@@ -341,11 +341,14 @@ golangci_lint_fix: $(GO_FILES)
 lint_api: $(GO_FILES)
 	@$(KAL) run --config $(KAL_CONFIG)
 
+lint_api_fix: $(GO_FILES)
+	@$(KAL) run --fix --config $(KAL_CONFIG)
+
 .PHONY: lint_go
-lint_go: licensecheck_go golangci_lint
+lint_go: licensecheck_go golangci_lint lint_api
 
 .PHONY: lint_go_fix
-lint_go_fix: licensecheck_go_fix golangci_lint_fix
+lint_go_fix: licensecheck_go_fix golangci_lint_fix lint_api_fix
 
 ####################
 # Linting: Jsonnet #
