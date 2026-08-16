@@ -393,7 +393,7 @@ func (c *Controller) updateCardinalityStatus(ctx context.Context, resource *v1al
 	for _, v := range agg.violations {
 		switch v.Severity {
 		case SeverityCutoff:
-			logger.Error(errors.New("cardinality threshold exceeded"), "metric generation cut off",
+			logger.Error(errors.New("cardinality threshold exceeded, cutoff pending"), "metric generation will be cut off on the next iteration",
 				"level", v.Level,
 				"name", v.Name,
 				"current", v.Current,
