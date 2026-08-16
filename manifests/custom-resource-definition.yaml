@@ -85,8 +85,15 @@ spec:
                           description: Families defines the metric families to generate
                             for this resource.
                           items:
-                            description: Family represents a metric family (a group
-                              of metrics with the same name).
+                            description: |-
+                              Family represents a metric family (a group of metrics with the same name).
+
+                              NOTE on CEL rule:
+                              In Kubernetes OpenAPI v3, `metrics` is a slice. If `metrics` is omitted, `has(self.metrics)` may evaluate to false.
+                              If the user explicitly sets `metrics: []` (empty list), `has(self.metrics)` will evaluate to true but its size will be 0.
+                              Therefore, the CEL rule checks `!has(self.metrics) || size(self.metrics) == 0` for the starlark case,
+                              and `has(self.metrics) && size(self.metrics) > 0` for the metrics case.
+                              Do not "simplify" this rule (e.g. removing `!has` or `size` checks) as it ensures correct validation of omitted vs. empty lists.
                             properties:
                               cardinalityLimit:
                                 description: CardinalityLimit sets the maximum cardinality
@@ -110,6 +117,7 @@ spec:
                                       description: Name is the label name.
                                       maxLength: 128
                                       minLength: 1
+                                      pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
                                       type: string
                                     value:
                                       description: Value is the expression to evaluate
@@ -121,6 +129,9 @@ spec:
                                   - value
                                   type: object
                                 type: array
+                                x-kubernetes-list-map-keys:
+                                - name
+                                x-kubernetes-list-type: map
                               metrics:
                                 description: |-
                                   Metrics defines the individual metrics within this family.
@@ -140,6 +151,7 @@ spec:
                                             description: Name is the label name.
                                             maxLength: 128
                                             minLength: 1
+                                            pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
                                             type: string
                                           value:
                                             description: Value is the expression to
@@ -151,6 +163,9 @@ spec:
                                         - value
                                         type: object
                                       type: array
+                                      x-kubernetes-list-map-keys:
+                                      - name
+                                      x-kubernetes-list-type: map
                                     resolver:
                                       description: Resolver overrides the family/store
                                         resolver for this metric.
@@ -163,6 +178,7 @@ spec:
                                     value:
                                       description: Value is the expression to evaluate
                                         for the metric value.
+                                      minLength: 1
                                       type: string
                                   required:
                                   - value
@@ -227,17 +243,29 @@ spec:
                             - help
                             - name
                             type: object
+                            x-kubernetes-validations:
+                            - message: either starlark or metrics must be configured,
+                                but not both
+                              rule: 'has(self.starlark) ? !has(self.metrics) || size(self.metrics)
+                                == 0 : (has(self.metrics) && size(self.metrics) >
+                                0)'
                           minItems: 1
                           type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
                         group:
                           description: |-
                             Group is the API group of the resource (empty string for core resources).
                             Supports "*" to match all groups.
+                          pattern: ^(\*|([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)*[a-z0-9]([-a-z0-9]*[a-z0-9])?|)$
                           type: string
                         kind:
                           description: |-
                             Kind is the kind of the resource.
                             Supports "*" to match all kinds within the specified group/version.
+                          minLength: 1
+                          pattern: ^(\*|[a-zA-Z0-9]+)$
                           type: string
                         labels:
                           description: Labels defines additional labels to apply to
@@ -250,6 +278,7 @@ spec:
                                 description: Name is the label name.
                                 maxLength: 128
                                 minLength: 1
+                                pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
                                 type: string
                               value:
                                 description: Value is the expression to evaluate for
@@ -261,6 +290,9 @@ spec:
                             - value
                             type: object
                           type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
                         resolver:
                           description: |-
                             Resolver sets the default resolver for all families/metrics in this store.
@@ -274,6 +306,8 @@ spec:
                         resource:
                           description: Resource is the plural resource name (e.g.
                             "deployments", "pods").
+                          minLength: 1
+                          pattern: ^(\*|[a-z0-9-]+)$
                           type: string
                         selectors:
                           description: Selectors defines how to filter the resources
@@ -291,9 +325,15 @@ spec:
                         version:
                           description: Version is the API version of the resource.
                             Supports "*" to match all versions.
+                          minLength: 1
+                          pattern: ^(\*|[a-zA-Z0-9]+)$
                           type: string
                       required:
                       - families
+                      - group
+                      - kind
+                      - resource
+                      - version
                       type: object
                     minItems: 1
                     type: array
