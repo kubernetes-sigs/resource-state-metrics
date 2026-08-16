@@ -111,8 +111,10 @@ func (ct *CardinalityTracker) Update(uid types.UID, perFamilyCounts map[string]i
 		}
 	}
 
-	ct.perObject[uid] = perFamilyCounts
-	for family, count := range perFamilyCounts {
+	counts := maps.Clone(perFamilyCounts)
+
+	ct.perObject[uid] = counts
+	for family, count := range counts {
 		ct.perFamily[family] += count
 		ct.storeTotal += count
 	}
@@ -203,28 +205,41 @@ func (ct *CardinalityTracker) CheckThresholds() []ThresholdViolation {
 		}
 	}
 
-	if ct.storeThreshold > 0 {
-		ratio := float64(ct.storeTotal) / float64(ct.storeThreshold)
-		if ratio > 1.0 {
-			for family := range ct.perFamily {
-				ct.cutoffFamilies[family] = true
-			}
+	if ct.storeThreshold <= 0 {
+		return violations
+	}
 
-			violations = append(violations, ThresholdViolation{
-				Level:     ThresholdLevelStore,
-				Name:      "store",
-				Current:   ct.storeTotal,
-				Threshold: ct.storeThreshold,
-				Severity:  SeverityCutoff,
-			})
-		} else if ratio >= ct.warningRatio {
-			violations = append(violations, ThresholdViolation{
-				Level:     ThresholdLevelStore,
-				Name:      "store",
-				Current:   ct.storeTotal,
-				Threshold: ct.storeThreshold,
-				Severity:  SeverityWarning,
-			})
+	ratio := float64(ct.storeTotal) / float64(ct.storeThreshold)
+	if ratio > 1.0 {
+		for family := range ct.perFamily {
+			ct.cutoffFamilies[family] = true
+		}
+
+		violations = append(violations, ThresholdViolation{
+			Level:     ThresholdLevelStore,
+			Name:      "store",
+			Current:   ct.storeTotal,
+			Threshold: ct.storeThreshold,
+			Severity:  SeverityCutoff,
+		})
+
+		return violations
+	}
+
+	if ratio >= ct.warningRatio {
+		violations = append(violations, ThresholdViolation{
+			Level:     ThresholdLevelStore,
+			Name:      "store",
+			Current:   ct.storeTotal,
+			Threshold: ct.storeThreshold,
+			Severity:  SeverityWarning,
+		})
+	}
+
+	for family := range ct.perFamily {
+		threshold, hasThreshold := ct.familyThreshold[family]
+		if !hasThreshold || threshold <= 0 {
+			ct.cutoffFamilies[family] = false
 		}
 	}
 
