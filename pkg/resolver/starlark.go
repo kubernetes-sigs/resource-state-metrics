@@ -196,8 +196,9 @@ func (sr *StarlarkResolver) resolveWithSteps(thread *starlark.Thread, obj map[st
 	globals, err := program.Init(thread, predeclared)
 	// Freeze the globals irrespective of the execution outcome, mirroring
 	// starlark.ExecFileOptions.
-	globals.Freeze()
-
+	if globals != nil {
+		globals.Freeze()
+	}
 	if err != nil {
 		var evalErr *starlark.EvalError
 		if errors.As(err, &evalErr) {
