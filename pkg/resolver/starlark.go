@@ -161,7 +161,8 @@ func (sr *StarlarkResolver) Resolve(obj map[string]interface{}) ([]ResolvedFamil
 func (sr *StarlarkResolver) compiledProgram() (*starlark.Program, error) {
 	sr.compileOnce.Do(func() {
 		isPredeclared := func(name string) bool {
-			return name == "obj" || starlarkPredeclared.Has(name)
+			_, ok := starlarkPredeclared[name]
+			return name == "obj" || ok
 		}
 
 		_, program, err := starlark.SourceProgramOptions(starlarkFileOptions, "script.star", sr.script, isPredeclared)
