@@ -79,14 +79,18 @@ const (
 	celCostNow         uint64 = 1
 )
 
+// customFunctionsCosts maps custom function names to their cost budgets.
+// Package-level so CallCost, invoked for every function call during CEL
+// evaluation, does not rebuild it each time.
+var customFunctionsCosts = map[string]uint64{
+	"unixSeconds": celCostUnixSeconds,
+	"quantity":    celCostQuantity,
+	"labelPrefix": celCostLabelPrefix,
+	"now":         celCostNow,
+}
+
 // CallCost sets the runtime cost for CEL queries on a per-function basis.
 func (ce costEstimator) CallCost(function string, _ string, _ []ref.Val, _ ref.Val) *uint64 {
-	customFunctionsCosts := map[string]uint64{
-		"unixSeconds": celCostUnixSeconds,
-		"quantity":    celCostQuantity,
-		"labelPrefix": celCostLabelPrefix,
-		"now":         celCostNow,
-	}
 	estimatedCost := 1 + customFunctionsCosts[function]
 
 	return &estimatedCost
