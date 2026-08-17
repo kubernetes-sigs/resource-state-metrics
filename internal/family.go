@@ -411,34 +411,48 @@ func sortLabels(keys []string, parallel ...[]string) {
 }
 
 // collectIndexedResolvedValues returns resolver values stored under numbered
-// keys with #0, #1, ... suffixes, preserving empty string values.
+// keys with #0, #1, ... suffixes, preserving empty string values. Collection
+// stops at the first gap in the index sequence, so only the contiguous run
+// starting at #0 is returned.
 func collectIndexedResolvedValues(resolved map[string]string) []string {
-	var values []string
+	// An index can only belong to the contiguous run starting at #0 if it is
+	// smaller than the total number of keys, so flat slices of len(resolved)
+	// suffice to stage the values.
+	staged := make([]string, len(resolved))
+	present := make([]bool, len(resolved))
 
-	for i := 0; ; i++ {
-		suffix := "#" + strconv.Itoa(i)
-
-		var match string
-
-		found := false
-
-		for k, v := range resolved {
-			if strings.HasSuffix(k, suffix) {
-				match = v
-				found = true
-
-				break
-			}
+	for k, v := range resolved {
+		hash := strings.LastIndexByte(k, '#')
+		if hash < 0 {
+			continue
 		}
 
-		if !found {
-			break
+		suffix := k[hash+1:]
+		// Reject non-canonical forms ("01", "+1", "-1") that Atoi accepts but
+		// the resolvers never generate.
+		if suffix == "" || suffix[0] == '+' || suffix[0] == '-' || (suffix[0] == '0' && len(suffix) > 1) {
+			continue
 		}
 
-		values = append(values, match)
+		i, err := strconv.Atoi(suffix)
+		if err != nil || i >= len(staged) {
+			continue
+		}
+
+		staged[i] = v
+		present[i] = true
 	}
 
-	return values
+	end := 0
+	for end < len(present) && present[end] {
+		end++
+	}
+
+	if end == 0 {
+		return nil
+	}
+
+	return staged[:end:end]
 }
 
 // sanitizeKey converts a label key to snake_case and strips non-alphanumeric characters.
