@@ -77,7 +77,7 @@ func buildStore(
 	logger := klog.FromContext(ctx)
 	listerwatcher := buildLW(ctx, dynamicClientset, labelSelector, fieldSelector, gvkWithR.GroupVersionResource)
 	// Propagate CEL limits, metrics, and RMM identity to all families before
-	// buildMetricHeaders so that family.createdAt is set when buildHeaders runs.
+	// store creation so that family.createdAt is set.
 	familyCreatedAt := nowTime()
 
 	for _, family := range metricFamilies {
@@ -90,8 +90,7 @@ func buildStore(
 		family.managedRMMName = name
 	}
 
-	headers := buildMetricHeaders(metricFamilies)
-	s := newStore(logger, headers, metricFamilies, resolver, labels, celCostLimit, celTimeout)
+	s := newStore(logger, metricFamilies, resolver, labels, celCostLimit, celTimeout)
 	gvk := gvkWithR.GroupVersionKind
 	s.Group = gvk.Group
 	s.Version = gvk.Version
@@ -110,15 +109,6 @@ func buildStore(
 	startReflector(ctx, listerwatcher, gvkWithR, s)
 
 	return s
-}
-
-func buildMetricHeaders(metricFamilies []*FamilyType) []string {
-	headers := make([]string, len(metricFamilies))
-	for i, f := range metricFamilies {
-		headers[i] = f.buildHeaders()
-	}
-
-	return headers
 }
 
 func startReflector(ctx context.Context, lw cache.ListerWatcher, gvkWithR gvkr, s *StoreType) {

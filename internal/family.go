@@ -24,7 +24,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +31,7 @@ import (
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/metricutil"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/resolver"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
@@ -48,36 +48,11 @@ const (
 	expandedValueSentinel = "\x00"
 )
 
-// stringBuilderPool pools strings.Builder instances to reduce GC pressure
-// during metric generation. It does so by cutting down on the number of
-// allocations and deallocations of strings.Builder objects, which can be
-// significant when generating a large number of metrics, especially in
-// high-cardinality scenarios.
 // listIndexRegex matches resolver keys of the form "fieldParent#N" used for list expansion.
 var listIndexRegex = regexp.MustCompile(`.+#\d+`) //nolint:forbidigo // package-level
 
 // nonWordRegex matches non-alphanumeric characters for label key sanitization.
 var nonWordRegex = regexp.MustCompile(`\W`) //nolint:forbidigo // package-level
-
-var stringBuilderPool = sync.Pool{
-	New: func() interface{} {
-		return &strings.Builder{}
-	},
-}
-
-func getBuilder() *strings.Builder {
-	b, ok := stringBuilderPool.Get().(*strings.Builder)
-	if !ok {
-		return &strings.Builder{}
-	}
-
-	return b
-}
-
-func putBuilder(b *strings.Builder) {
-	b.Reset()
-	stringBuilderPool.Put(b)
-}
 
 // MetricKind represents the OpenMetrics metric type for a family.
 // See the whitepaper for the rationale behind these types:
@@ -126,58 +101,65 @@ func (f *FamilyType) IsCutoff() bool {
 	return f.cutoff.Load()
 }
 
-// generatePeripheralMetric generates peripheral metrics wherever applicable.
-func generatePeripheralMetric(familyRawBuilder *strings.Builder, familyName string, kind MetricKind, createdAt time.Time) {
-	// Emit a single _created sample at the end of the family, not once per
-	// metric or per expanded sample. The reference implementation (client_python)
-	// confirms _created carries no labels and is a family-level timestamp.
-	// NOTE "_created" will forever be the only peripheral metric we generate,
-	// since other (peripheral) ones listed in [1] are out of scope.
-	// [1]:https://github.com/prometheus/client_python/blob/8673912276bdca7ddbca5d163eb11422b546bffb/prometheus_client/registry.py#L76-L80
+// dtoTypeFor maps MetricKind to the dto.MetricType proto enum.
+func dtoTypeFor(kind MetricKind) dto.MetricType {
 	if kind == MetricKindCounter {
-		createdSampleName := kubeCustomResourcePrefix + strings.TrimSuffix(familyName, "_total") + "_created"
-		createdValue := fmt.Sprintf("%f", float64(createdAt.UnixNano())/1e9)
-
-		familyRawBuilder.WriteString("# HELP " + createdSampleName + " Time at which " + kubeCustomResourcePrefix + familyName + " was created.")
-		familyRawBuilder.WriteString("\n# TYPE " + createdSampleName + " " + string(MetricKindCounter))
-		familyRawBuilder.WriteByte('\n')
-		familyRawBuilder.WriteString(createdSampleName)
-		familyRawBuilder.WriteByte(' ')
-		familyRawBuilder.WriteString(createdValue)
+		return dto.MetricType_COUNTER
 	}
+
+	return dto.MetricType_GAUGE
 }
 
-// buildMetricString returns the given family in its byte representation and the sample count.
-// The sample count always reflects the family's true cardinality, even when cut off, so that
-// cardinality tracking stays accurate and idempotent across reprocessing (e.g. informer relists).
-// If the family is cut off due to cardinality limits, the returned string is empty, suppressing
-// output, while the real sample count is still returned.
-func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) (string, int64) {
+// buildDTOMetric creates a *dto.Metric from resolved label keys/values and a string value.
+func buildDTOMetric(group, version, kind, namespace, name, value string, labelKeys, labelValues []string, metricKind MetricKind) (*dto.Metric, error) {
+	floatVal, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing metric value %q as float64: %w", value, err)
+	}
+
+	if err := validateValue(floatVal, metricKind); err != nil {
+		return nil, fmt.Errorf("invalid metric value %f for kind %s: %w", floatVal, metricKind, err)
+	}
+
+	keys, values := appendAutoLabels(labelKeys, labelValues, group, version, kind, namespace, name)
+	labelPairs := make([]*dto.LabelPair, len(keys))
+
+	for i := range keys {
+		k, v := keys[i], values[i]
+		labelPairs[i] = &dto.LabelPair{Name: &k, Value: &v}
+	}
+
+	m := &dto.Metric{Label: labelPairs}
+	if metricKind == MetricKindCounter {
+		m.Counter = &dto.Counter{Value: &floatVal}
+	} else {
+		m.Gauge = &dto.Gauge{Value: &floatVal}
+	}
+
+	return m, nil
+}
+
+// buildMetricFamily returns the given family as a *dto.MetricFamily and the sample count.
+// Returns nil family (but real sample count) when cut off.
+func (f *FamilyType) buildMetricFamily(unstructured *unstructured.Unstructured) (*dto.MetricFamily, int64) {
 	logger := f.logger.WithValues("family", f.Name)
 	cutoff := f.IsCutoff()
 
-	var metricStr string
+	var metrics []*dto.Metric
 
 	var sampleCount int64
 
 	switch {
 	case f.starlarkResolver != nil:
-		metricStr, sampleCount = f.buildMetricStringFromStarlark(unstructured)
+		metrics, sampleCount = f.buildMetricFamilyFromStarlark(unstructured)
 	default:
-		familyRawBuilder := getBuilder()
-		defer putBuilder(familyRawBuilder)
-
 		for i := range f.Metrics {
 			metric := &f.Metrics[i]
-			metricRawBuilder := getBuilder()
-
-			// Combine metric labels with family labels
 			metricLabels := inheritMetricLabels(f, metric)
 
 			resolverInstance, err := f.resolver(metric.Resolver)
 			if err != nil {
 				logger.V(1).Error(fmt.Errorf("error resolving metric: %w", err), "skipping")
-				putBuilder(metricRawBuilder)
 
 				continue
 			}
@@ -187,68 +169,69 @@ func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) 
 			resolvedValue, ok, err := resolveMetricValue(resolverInstance, metric.Value, unstructured.Object, resolvedExpandedLabelSet)
 			if err != nil {
 				logger.V(1).Error(fmt.Errorf("error resolving metric value %q: %w", metric.Value, err), "skipping")
-				putBuilder(metricRawBuilder)
 
 				continue
 			}
 
 			if !ok {
-				putBuilder(metricRawBuilder)
-
 				continue
 			}
 
-			samples, err := writeMetricSamplesWithCount(metricRawBuilder, f.Name, f.kind(), unstructured, resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet, resolvedValue, logger)
+			samples, count, err := collectMetricSamples(f.kind(), unstructured, resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet, resolvedValue, logger)
 			if err != nil {
-				putBuilder(metricRawBuilder)
-
 				continue
 			}
 
-			sampleCount += samples
-
-			familyRawBuilder.WriteString(metricRawBuilder.String())
-			putBuilder(metricRawBuilder)
+			sampleCount += count
+			metrics = append(metrics, samples...)
 		}
-
-		metricStr = familyRawBuilder.String()
 	}
 
 	if cutoff {
 		logger.V(1).Info("Family is cut off due to cardinality limits, suppressing metric output")
 
-		return "", sampleCount
+		return nil, sampleCount
 	}
 
-	return metricStr, sampleCount
+	if len(metrics) == 0 {
+		return nil, sampleCount
+	}
+
+	familyName := kubeCustomResourcePrefix + f.Name
+	helpText := f.Help
+	dtoType := dtoTypeFor(f.kind())
+
+	return &dto.MetricFamily{
+		Name:   &familyName,
+		Help:   &helpText,
+		Type:   &dtoType,
+		Metric: metrics,
+	}, sampleCount
 }
 
-// buildMetricStringFromStarlark resolves metrics using the Starlark resolver.
-func (f *FamilyType) buildMetricStringFromStarlark(unstr *unstructured.Unstructured) (string, int64) {
+// buildMetricFamilyFromStarlark resolves metrics using the Starlark resolver.
+func (f *FamilyType) buildMetricFamilyFromStarlark(unstr *unstructured.Unstructured) ([]*dto.Metric, int64) {
 	logger := f.logger.WithValues("family", f.Name)
 
 	families, err := f.starlarkResolver.Resolve(unstr.Object)
 	if err != nil {
 		logger.V(1).Error(err, "Starlark generation failed")
 
-		return "", 0
+		return nil, 0
 	}
 
 	if len(families) == 0 {
-		return "", 0
+		return nil, 0
 	}
 
-	familyRawBuilder := getBuilder()
-	defer putBuilder(familyRawBuilder)
+	var metrics []*dto.Metric
 
 	var sampleCount int64
 
 	for _, genFamily := range families {
 		for _, sample := range genFamily.Samples {
-			familyRawBuilder.WriteString(kubeCustomResourcePrefix + f.Name)
-
-			// Build label string
 			var labelKeys, labelValues []string
+
 			for k, v := range sample.Labels {
 				labelKeys = append(labelKeys, sanitizeKey(k))
 				labelValues = append(labelValues, v)
@@ -256,11 +239,9 @@ func (f *FamilyType) buildMetricStringFromStarlark(unstr *unstructured.Unstructu
 
 			sortLabels(labelKeys, labelValues)
 
-			// Format the metric value
 			valueStr := strconv.FormatFloat(sample.Value, 'f', -1, 64)
 
-			if err := writeMetricTo(
-				familyRawBuilder,
+			m, err := buildDTOMetric(
 				unstr.GroupVersionKind().Group,
 				unstr.GroupVersionKind().Version,
 				unstr.GroupVersionKind().Kind,
@@ -269,17 +250,149 @@ func (f *FamilyType) buildMetricStringFromStarlark(unstr *unstructured.Unstructu
 				valueStr,
 				labelKeys, labelValues,
 				f.kind(),
-			); err != nil {
-				logger.V(1).Error(err, "error writing Starlark-generated metric")
+			)
+			if err != nil {
+				logger.V(1).Error(err, "error building Starlark-generated metric")
 
 				continue
 			}
 
+			metrics = append(metrics, m)
 			sampleCount++
 		}
 	}
 
-	return familyRawBuilder.String(), sampleCount
+	return metrics, sampleCount
+}
+
+// buildPeripheralFamily returns a *dto.MetricFamily for the _created peripheral metric if this is a counter family.
+func (f *FamilyType) buildPeripheralFamily() *dto.MetricFamily {
+	if f.kind() != MetricKindCounter {
+		return nil
+	}
+
+	createdName := kubeCustomResourcePrefix + strings.TrimSuffix(f.Name, "_total") + "_created"
+	createdHelp := "Time at which " + kubeCustomResourcePrefix + f.Name + " was created."
+	createdVal := float64(f.createdAt.UnixNano()) / 1e9
+	counterType := dto.MetricType_COUNTER
+
+	return &dto.MetricFamily{
+		Name: &createdName,
+		Help: &createdHelp,
+		Type: &counterType,
+		Metric: []*dto.Metric{
+			{Counter: &dto.Counter{Value: &createdVal}},
+		},
+	}
+}
+
+// collectMetricSamples collects *dto.Metric entries for a single metric expression.
+func collectMetricSamples(
+	kind MetricKind,
+	raw *unstructured.Unstructured,
+	keys, values []string,
+	expanded map[string][]string,
+	value string,
+	logger klog.Logger,
+) ([]*dto.Metric, int64, error) {
+	expandedValues := extractAndSortExpandedMetricValues(expanded, logger)
+
+	var metrics []*dto.Metric
+
+	var sampleCount int64
+
+	expandedIdx := 0
+	appendSample := func(k, v []string) error {
+		cur := value
+		if expandedIdx < len(expandedValues) {
+			cur = expandedValues[expandedIdx]
+		}
+
+		expandedIdx++
+
+		m, err := buildDTOMetric(
+			raw.GroupVersionKind().Group,
+			raw.GroupVersionKind().Version,
+			raw.GroupVersionKind().Kind,
+			raw.GetNamespace(),
+			raw.GetName(),
+			cur, k, v, kind,
+		)
+		if err != nil {
+			return err
+		}
+
+		metrics = append(metrics, m)
+		sampleCount++
+
+		return nil
+	}
+
+	if len(expanded) == 0 {
+		if len(expandedValues) == 0 {
+			if err := appendSample(keys, values); err != nil {
+				logger.V(1).Error(fmt.Errorf("error building metric: %w", err), "skipping")
+
+				return nil, 0, err
+			}
+
+			return metrics, sampleCount, nil
+		}
+
+		for range expandedValues {
+			if err := appendSample(keys, values); err != nil {
+				logger.V(1).Error(fmt.Errorf("error building metric: %w", err), "skipping")
+
+				return metrics, sampleCount, err
+			}
+		}
+
+		return metrics, sampleCount, nil
+	}
+
+	if err := collectExpandedSamples(appendSample, keys, values, expanded, logger); err != nil {
+		return metrics, sampleCount, err
+	}
+
+	return metrics, sampleCount, nil
+}
+
+// collectExpandedSamples iterates expanded label lists and calls appendFn for each series.
+func collectExpandedSamples(appendFn func([]string, []string) error, labelKeys, labelValues []string, expanded map[string][]string, logger klog.Logger) error {
+	var seriesToGenerate int
+
+	for _, k := range slices.Sorted(maps.Keys(expanded)) {
+		labelKeys = append(labelKeys, k)
+
+		if len(expanded[k]) > seriesToGenerate {
+			seriesToGenerate = len(expanded[k])
+		}
+	}
+
+	for range seriesToGenerate {
+		ephemeralLabelValues := labelValues
+		expansionKeys := labelKeys[len(labelKeys)-len(expanded):]
+
+		for _, k := range expansionKeys {
+			vs := expanded[k]
+			if len(vs) == 0 {
+				ephemeralLabelValues = append(ephemeralLabelValues, "")
+
+				continue
+			}
+
+			ephemeralLabelValues = append(ephemeralLabelValues, vs[0])
+			expanded[k] = vs[1:]
+		}
+
+		if err := appendFn(slices.Clone(labelKeys), slices.Clone(ephemeralLabelValues)); err != nil {
+			logger.V(1).Error(fmt.Errorf("error building metric: %w", err), "skipping")
+
+			return err
+		}
+	}
+
+	return nil
 }
 
 // inheritMetricAttributes applies family-level labels to the metric.
@@ -495,120 +608,14 @@ func extractAndSortExpandedMetricValues(expanded map[string][]string, logger klo
 	return expandedValues
 }
 
-// writeMetricSamplesWithCount writes single or expanded metric values and returns the sample count.
-func writeMetricSamplesWithCount(
-	builder *strings.Builder,
-	name string,
-	kind MetricKind,
-	raw *unstructured.Unstructured,
-	keys, values []string,
-	expanded map[string][]string,
-	value string,
-	logger klog.Logger,
-) (int64, error) {
-	expandedValues := extractAndSortExpandedMetricValues(expanded, logger)
-
-	var sampleCount int64
-
-	expandedValueIndex := 0
-	writeMetric := func(k, v []string) error {
-		builder.WriteString(kubeCustomResourcePrefix + name)
-
-		currentValue := value
-		if expandedValueIndex < len(expandedValues) {
-			currentValue = expandedValues[expandedValueIndex]
-		}
-
-		expandedValueIndex++
-		sampleCount++
-
-		return writeMetricTo(
-			builder,
-			raw.GroupVersionKind().Group,
-			raw.GroupVersionKind().Version,
-			raw.GroupVersionKind().Kind,
-			raw.GetNamespace(),
-			raw.GetName(),
-			currentValue,
-			k, v,
-			kind,
-		)
+// kind deduces the OpenMetrics metric type from the family name.
+// A name ending with _total is treated as a counter; everything else is a gauge.
+func (f *FamilyType) kind() MetricKind {
+	if strings.HasSuffix(f.Name, "_total") {
+		return MetricKindCounter
 	}
 
-	if len(expanded) == 0 {
-		if len(expandedValues) == 0 {
-			if err := writeSingleSample(writeMetric, keys, values, logger); err != nil {
-				return 0, err
-			}
-
-			return sampleCount, nil
-		}
-		// Value-only expansion: one sample per expanded value, same label set.
-		for range expandedValues {
-			if err := writeSingleSample(writeMetric, keys, values, logger); err != nil {
-				return sampleCount, err
-			}
-		}
-
-		return sampleCount, nil
-	}
-
-	if err := writeExpandedSamples(writeMetric, keys, values, expanded, logger); err != nil {
-		return sampleCount, err
-	}
-
-	return sampleCount, nil
-}
-
-// writeSingleSample writes a single metric sample.
-func writeSingleSample(writeFunc func([]string, []string) error, keys, values []string, logger klog.Logger) error {
-	if err := writeFunc(keys, values); err != nil {
-		logger.V(1).Error(fmt.Errorf("error writing metric: %w", err), "skipping")
-
-		return err
-	}
-
-	return nil
-}
-
-// writeExpandedSamples writes metric samples for list-based label values.
-func writeExpandedSamples(writeFunc func([]string, []string) error, labelKeys, labelValues []string, expanded map[string][]string, logger klog.Logger) error {
-	var seriesToGenerate int
-
-	// Sort expanded keys to ensure deterministic label ordering.
-	// Map iteration order is non-deterministic, so we must sort explicitly.
-	for _, k := range slices.Sorted(maps.Keys(expanded)) {
-		labelKeys = append(labelKeys, k)
-
-		if len(expanded[k]) > seriesToGenerate {
-			seriesToGenerate = len(expanded[k])
-		}
-	}
-
-	for range seriesToGenerate {
-		ephemeralLabelValues := labelValues
-		// Don't iterate over the `expanded` map, as the order of keys is unstable.
-		expansionKeys := labelKeys[len(labelKeys)-len(expanded):]
-		for _, k := range expansionKeys {
-			vs := expanded[k]
-			if len(vs) == 0 {
-				ephemeralLabelValues = append(ephemeralLabelValues, "")
-
-				continue
-			}
-
-			ephemeralLabelValues = append(ephemeralLabelValues, vs[0])
-			expanded[k] = vs[1:]
-		}
-		// Pass a copy of the label keys and values to avoid modifying the original slices.
-		if err := writeFunc(slices.Clone(labelKeys), slices.Clone(ephemeralLabelValues)); err != nil {
-			logger.V(1).Error(fmt.Errorf("error writing metric: %w", err), "skipping")
-
-			return err
-		}
-	}
-
-	return nil
+	return MetricKindGauge
 }
 
 func (f *FamilyType) resolver(inheritedResolver v1alpha1.ResolverType) (resolver.Resolver, error) {
@@ -640,58 +647,4 @@ func (f *FamilyType) resolver(inheritedResolver v1alpha1.ResolverType) (resolver
 	default:
 		return nil, fmt.Errorf("error resolving metric: unknown resolver %q", inheritedResolver)
 	}
-}
-
-// buildHeaders generates the header for the given family.
-// https://github.com/prometheus/OpenMetrics/blob/v1.0.0/specification/OpenMetrics.md#gauge:
-// "Even if they only ever go in one direction, they might still be gauges and not counters."
-//
-// For now, we treat all metrics as guages, unless their family name ends
-// with "_total", in which case we treat them as counters. This behavior will
-// be revised once Info and Stateset metric types are supported in
-// Prometheus.
-// kind deduces the OpenMetrics metric type from the family name.
-// A name ending with _total is treated as a counter; everything else is a gauge.
-func (f *FamilyType) kind() MetricKind {
-	if strings.HasSuffix(f.Name, "_total") {
-		return MetricKindCounter
-	}
-
-	return MetricKindGauge
-}
-
-func (f *FamilyType) buildHeaders() string {
-	header := strings.Builder{}
-	header.WriteString("# HELP " + kubeCustomResourcePrefix + f.Name + " " + escapeHelp(f.Help))
-	header.WriteString("\n")
-	header.WriteString("# TYPE " + kubeCustomResourcePrefix + f.Name + " " + string(f.kind()))
-
-	return header.String()
-}
-
-// escapeHelp escapes a HELP string per the Prometheus text exposition format:
-// backslashes become "\\" and newlines become "\n". Backslashes must be escaped before newlines,
-// otherwise the "\" inserted for "\n" would itself be escaped on a second pass.
-func escapeHelp(s string) string {
-	if !strings.ContainsAny(s, "\\\n") {
-		return s
-	}
-
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, "\n", `\n`)
-
-	return s
-}
-
-// buildPeripheralHeader returns headers for peripheral metrics like _created, if applicable.
-func (f *FamilyType) buildPeripheralHeader() string {
-	if f.kind() != MetricKindCounter {
-		return ""
-	}
-
-	var b strings.Builder
-
-	generatePeripheralMetric(&b, f.Name, f.kind(), f.createdAt)
-
-	return b.String()
 }

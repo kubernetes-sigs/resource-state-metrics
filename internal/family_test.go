@@ -16,12 +16,14 @@ limitations under the License.
 package internal
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/resolver"
+	"github.com/prometheus/common/expfmt"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
 )
@@ -89,7 +91,7 @@ func TestFamilyType_rawFrom(t *testing.T) {
 					},
 				},
 			},
-			expected: "kube_customresource_test_family{group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 42.000000\n",
+			expected: "# HELP kube_customresource_test_family test_help\n# TYPE kube_customresource_test_family gauge\nkube_customresource_test_family{group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 42\n",
 		},
 		{
 			// name and namespace labels are auto-injected
@@ -107,7 +109,7 @@ func TestFamilyType_rawFrom(t *testing.T) {
 					},
 				},
 			},
-			expected: "kube_customresource_test_family{group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 42.000000\n",
+			expected: "# HELP kube_customresource_test_family test_help\n# TYPE kube_customresource_test_family gauge\nkube_customresource_test_family{group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 42\n",
 		},
 		{
 			name: "non-empty family with no resolver (should error)",
@@ -146,12 +148,12 @@ func TestFamilyType_rawFrom(t *testing.T) {
 					},
 				},
 			},
-			expected: strings.Join([]string{
-				"kube_customresource_pod_status_conditions{type=\"ContainersReady\",group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 0.000000",
-				"kube_customresource_pod_status_conditions{type=\"Initialized\",group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 1.000000",
-				"kube_customresource_pod_status_conditions{type=\"PodReadyToStartContainers\",group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 1.000000",
-				"kube_customresource_pod_status_conditions{type=\"PodScheduled\",group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 0.000000",
-				"kube_customresource_pod_status_conditions{type=\"Ready\",group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 0.000000",
+			expected: "# HELP kube_customresource_pod_status_conditions Condition status for each pod instance\n# TYPE kube_customresource_pod_status_conditions gauge\n" + strings.Join([]string{
+				"kube_customresource_pod_status_conditions{type=\"ContainersReady\",group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 0",
+				"kube_customresource_pod_status_conditions{type=\"Initialized\",group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 1",
+				"kube_customresource_pod_status_conditions{type=\"PodReadyToStartContainers\",group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 1",
+				"kube_customresource_pod_status_conditions{type=\"PodScheduled\",group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 0",
+				"kube_customresource_pod_status_conditions{type=\"Ready\",group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 0",
 			}, "\n") + "\n",
 		},
 	}
@@ -160,7 +162,17 @@ func TestFamilyType_rawFrom(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			actual, sampleCount := tt.family.buildMetricString(unstructuredWrapper)
+			mf, sampleCount := tt.family.buildMetricFamily(unstructuredWrapper)
+
+			var buf bytes.Buffer
+			if mf != nil {
+				enc := expfmt.NewEncoder(&buf, expfmt.NewFormat(expfmt.TypeTextPlain))
+				if err := enc.Encode(mf); err != nil {
+					t.Fatalf("failed to encode metric family: %v", err)
+				}
+			}
+
+			actual := buf.String()
 			if actual != tt.expected {
 				t.Errorf("%s\n%s", actual, cmp.Diff(actual, tt.expected))
 			}
@@ -418,54 +430,51 @@ func TestResolveMetricValue(t *testing.T) {
 	}
 }
 
-func TestEscapeHelp(t *testing.T) {
+func TestFamilyType_buildMetricFamily_escapesHelp(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{name: "plain text unchanged", in: "Number of replicas.", want: "Number of replicas."},
-		{name: "empty string unchanged", in: "", want: ""},
-		{name: "single newline escaped", in: "line1\nline2", want: `line1\nline2`},
-		{name: "single backslash escaped", in: `regex \d+`, want: `regex \\d+`},
-		{name: "backslash then newline: backslash escaped first", in: "a\\\nb", want: `a\\\nb`},
-		{name: "multiple newlines all escaped", in: "a\nb\nc", want: `a\nb\nc`},
-		{name: "tab is left as-is", in: "a\tb", want: "a\tb"},
-		{name: "unicode passes through", in: "héllo → wörld", want: "héllo → wörld"},
+	unstructuredWrapper := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Pod",
+			"metadata": map[string]interface{}{
+				"name":      "test-pod",
+				"namespace": "test-namespace",
+			},
+		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			got := escapeHelp(tt.in)
-			if got != tt.want {
-				t.Errorf("escapeHelp(%q) = %q, want %q", tt.in, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestFamilyType_buildHeaders_escapesHelp(t *testing.T) {
-	t.Parallel()
 
 	f := &FamilyType{
 		Family: v1alpha1.Family{
 			Name: "example",
 			Help: "line1\nline2 with \\ backslash",
+			Metrics: []v1alpha1.Metric{
+				{
+					Labels:   []v1alpha1.Label{},
+					Value:    "1",
+					Resolver: v1alpha1.ResolverTypeCEL,
+				},
+			},
 		},
 	}
 
-	got := f.buildHeaders()
-	want := "# HELP kube_customresource_example line1\\nline2 with \\\\ backslash\n# TYPE kube_customresource_example gauge"
-
-	if got != want {
-		t.Errorf("buildHeaders() mismatch:\n got: %q\nwant: %q", got, want)
+	mf, _ := f.buildMetricFamily(unstructuredWrapper)
+	if mf == nil {
+		t.Fatal("expected non-nil metric family")
 	}
 
-	if strings.Count(got, "\n") != 1 {
-		t.Errorf("expected exactly one literal newline in output, got %d", strings.Count(got, "\n"))
+	var buf bytes.Buffer
+	enc := expfmt.NewEncoder(&buf, expfmt.NewFormat(expfmt.TypeTextPlain))
+	if err := enc.Encode(mf); err != nil {
+		t.Fatalf("failed to encode metric family: %v", err)
+	}
+
+	got := buf.String()
+	// expfmt handles HELP escaping — verify the escaped forms appear in the output
+	if !strings.Contains(got, `line1\nline2`) {
+		t.Errorf("expected escaped newline in HELP line, got: %q", got)
+	}
+	if !strings.Contains(got, `\\`) {
+		t.Errorf("expected escaped backslash in HELP line, got: %q", got)
 	}
 }
