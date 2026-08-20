@@ -31,8 +31,8 @@ import (
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/metricutil"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/resolver"
-	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
 )
@@ -183,6 +183,7 @@ func (f *FamilyType) buildMetricFamily(unstructured *unstructured.Unstructured) 
 			}
 
 			sampleCount += count
+
 			metrics = append(metrics, samples...)
 		}
 	}

@@ -464,6 +464,7 @@ func TestFamilyType_buildMetricFamily_escapesHelp(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
+
 	enc := expfmt.NewEncoder(&buf, expfmt.NewFormat(expfmt.TypeTextPlain))
 	if err := enc.Encode(mf); err != nil {
 		t.Fatalf("failed to encode metric family: %v", err)
@@ -474,6 +475,7 @@ func TestFamilyType_buildMetricFamily_escapesHelp(t *testing.T) {
 	if !strings.Contains(got, `line1\nline2`) {
 		t.Errorf("expected escaped newline in HELP line, got: %q", got)
 	}
+
 	if !strings.Contains(got, `\\`) {
 		t.Errorf("expected escaped backslash in HELP line, got: %q", got)
 	}
