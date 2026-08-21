@@ -189,6 +189,110 @@ func checkCardinalityExceededMetric(t *testing.T, metricsOutput string) {
 	}
 }
 
+// TestFamilyCardinalityStoreLabel verifies that resource_state_metrics_family_cardinality
+// never emits with an empty store label.
+func TestFamilyCardinalityStoreLabel(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	rmm := &v1alpha1.ResourceMetricsMonitor{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "resource-state-metrics.instrumentation.k8s-sigs.io/v1alpha1",
+			Kind:       "ResourceMetricsMonitor",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "family-cardinality-store-label-test",
+			Namespace: "default",
+			UID:       uuid.NewUUID(),
+		},
+		Spec: v1alpha1.ResourceMetricsMonitorSpec{
+			Configuration: v1alpha1.Configuration{
+				Stores: []v1alpha1.Store{
+					{
+						Group:    "samplecontroller.k8s.io",
+						Version:  "v1beta1",
+						Kind:     "Bar",
+						Resource: "bars",
+						Resolver: v1alpha1.ResolverTypeUnstructured,
+						Families: []v1alpha1.Family{
+							{
+								Name: "store_label_bar_test",
+								Help: "Bar metric for store-label test",
+								Metrics: []v1alpha1.Metric{
+									{Labels: []v1alpha1.Label{}, Value: "1"},
+								},
+							},
+						},
+					},
+					{
+						Group:    "samplecontroller.k8s.io",
+						Version:  "v1alpha1",
+						Kind:     "Foo",
+						Resource: "foos",
+						Resolver: v1alpha1.ResolverTypeUnstructured,
+						Families: []v1alpha1.Family{
+							{
+								Name: "store_label_foo_test",
+								Help: "Foo metric for store-label test",
+								Metrics: []v1alpha1.Metric{
+									{Labels: []v1alpha1.Label{}, Value: "1"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	f := framework.NewInforming(ctx, rmm)
+
+	if err := applyCRDManifests(ctx, t, f); err != nil {
+		t.Fatalf("Failed to apply CRD manifests: %v", err)
+	}
+
+	gvrToKindListMap := make(map[schema.GroupVersionResource]string)
+	for _, crd := range f.GetIndexedCRDs() {
+		for _, version := range crd.Spec.Versions {
+			gv := schema.GroupVersion{Group: crd.Spec.Group, Version: version.Name}
+			f.AddToScheme(func(scheme *runtime.Scheme) {
+				scheme.AddKnownTypes(gv, &unstructured.Unstructured{}, &unstructured.UnstructuredList{})
+			})
+			gvr := schema.GroupVersionResource{
+				Group:    crd.Spec.Group,
+				Version:  version.Name,
+				Resource: crd.Spec.Names.Plural,
+			}
+			gvrToKindListMap[gvr] = crd.Spec.Names.Kind + "List"
+		}
+	}
+	f.WithDynamicClient(gvrToKindListMap)
+
+	if err := applyCRManifests(ctx, t, f); err != nil {
+		t.Fatalf("Failed to apply CR manifests: %v", err)
+	}
+
+	if err := f.Start(ctx, 1); err != nil {
+		t.Fatalf("Failed to start controller: %v", err)
+	}
+
+	time.Sleep(5 * framework.LongTimeInterval)
+
+	metricsOutput, err := f.FetchTelemetryMetrics(ctx)
+	if err != nil {
+		t.Fatalf("Failed to fetch telemetry metrics: %v", err)
+	}
+
+	for _, line := range strings.Split(metricsOutput, "\n") {
+		if strings.HasPrefix(line, "resource_state_metrics_family_cardinality{") {
+			if strings.Contains(line, `store=""`) {
+				t.Errorf("family_cardinality emitted with empty store label (regression): %s", line)
+			}
+		}
+	}
+}
+
 // testStatusUpdate verifies that RMM status is updated with cardinality info.
 func testStatusUpdate(ctx context.Context, t *testing.T, f *framework.Framework) {
 	t.Helper()
