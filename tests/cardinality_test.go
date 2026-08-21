@@ -253,12 +253,15 @@ func TestFamilyCardinalityStoreLabel(t *testing.T) {
 	}
 
 	gvrToKindListMap := make(map[schema.GroupVersionResource]string)
+
 	for _, crd := range f.GetIndexedCRDs() {
 		for _, version := range crd.Spec.Versions {
 			gv := schema.GroupVersion{Group: crd.Spec.Group, Version: version.Name}
+
 			f.AddToScheme(func(scheme *runtime.Scheme) {
 				scheme.AddKnownTypes(gv, &unstructured.Unstructured{}, &unstructured.UnstructuredList{})
 			})
+
 			gvr := schema.GroupVersionResource{
 				Group:    crd.Spec.Group,
 				Version:  version.Name,
@@ -267,6 +270,7 @@ func TestFamilyCardinalityStoreLabel(t *testing.T) {
 			gvrToKindListMap[gvr] = crd.Spec.Names.Kind + "List"
 		}
 	}
+
 	f.WithDynamicClient(gvrToKindListMap)
 
 	if err := applyCRManifests(ctx, t, f); err != nil {

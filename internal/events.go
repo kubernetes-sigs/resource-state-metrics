@@ -435,7 +435,7 @@ func (c *Controller) persistCardinalityStatus(ctx context.Context, resource *v1a
 	gotResource.Status.Cardinality = &v1alpha1.CardinalityStatus{
 		Total:              agg.totalCardinality,
 		PerStore:           agg.perStore,
-		PerFamily:          agg.perFamily,
+		PerFamily:          agg.perStoreFamily,
 		ThresholdsExceeded: hasThresholdExceeded(agg.violations),
 		CutoffFamilies:     agg.cutoffFamilies,
 		LastUpdated:        metav1.Now(),
