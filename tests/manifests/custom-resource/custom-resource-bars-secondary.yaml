@@ -37,3 +37,11 @@ spec:
     - type: Progressing
       status: "True"
       reason: Reconciling
+status:
+  replicas: 2
+  readyReplicas: 2
+  updatedReplicas: 1
+  availableReplicas: 2
+  activeZones:
+    - us-east-1a
+    - us-east-1b
