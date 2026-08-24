@@ -154,34 +154,53 @@ func (m *GlobalCardinalityManager) CheckThresholds(uid types.UID, resourceThresh
 		}
 	}
 
-	// Note: Under this global model, one resource exceeding limits affects all.
-	// More sophisticated strategies (per-namespace isolation, etc.) could be added if needed.
-	if m.globalThreshold > 0 {
-		ratio := float64(m.globalTotal) / float64(m.globalThreshold)
-		if ratio > 1.0 {
-			for r := range m.perResource {
-				m.cutoffResources[r] = true
-			}
-
-			violations = append(violations, ThresholdViolation{
-				Level:     ThresholdLevelGlobal,
-				Name:      "global",
-				Current:   m.globalTotal,
-				Threshold: m.globalThreshold,
-				Severity:  SeverityCutoff,
-			})
-		} else if ratio >= m.warningRatio {
-			violations = append(violations, ThresholdViolation{
-				Level:     ThresholdLevelGlobal,
-				Name:      "global",
-				Current:   m.globalTotal,
-				Threshold: m.globalThreshold,
-				Severity:  SeverityWarning,
-			})
-		}
-	}
+	m.checkGlobalThreshold(resourceThreshold, &violations)
 
 	return violations
+}
+
+func (m *GlobalCardinalityManager) checkGlobalThreshold(resourceThreshold int64, violations *[]ThresholdViolation) {
+	if m.globalThreshold <= 0 {
+		return
+	}
+
+	ratio := float64(m.globalTotal) / float64(m.globalThreshold)
+	if ratio > 1.0 {
+		for r := range m.perResource {
+			m.cutoffResources[r] = true
+		}
+
+		*violations = append(*violations, ThresholdViolation{
+			Level:     ThresholdLevelGlobal,
+			Name:      "global",
+			Current:   m.globalTotal,
+			Threshold: m.globalThreshold,
+			Severity:  SeverityCutoff,
+		})
+
+		return
+	}
+
+	if ratio >= m.warningRatio {
+		*violations = append(*violations, ThresholdViolation{
+			Level:     ThresholdLevelGlobal,
+			Name:      "global",
+			Current:   m.globalTotal,
+			Threshold: m.globalThreshold,
+			Severity:  SeverityWarning,
+		})
+	}
+
+	for r, cardinality := range m.perResource {
+		resThresh := resourceThreshold
+		if resThresh <= 0 {
+			resThresh = m.resourceDefaultThreshold
+		}
+
+		if resThresh <= 0 || float64(cardinality)/float64(resThresh) <= 1.0 {
+			m.cutoffResources[r] = false
+		}
+	}
 }
 
 // IsResourceCutoff returns whether a specific RMM resource is cut off.
