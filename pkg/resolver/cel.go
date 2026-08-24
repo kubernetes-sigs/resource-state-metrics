@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/cel-go/cel"
@@ -140,7 +141,7 @@ func (cr *CELResolver) Resolve(query string, unstructuredObjectMap map[string]in
 }
 
 func (cr *CELResolver) resolveWithTimeout(query string, unstructuredObjectMap map[string]interface{}, logger klog.Logger) (map[string]string, error) {
-	env, err := cr.createEnvironment()
+	env, err := getCELEnv()
 	if err != nil {
 		logger.Error(err, "ignoring resolution for query")
 
@@ -171,40 +172,50 @@ func (cr *CELResolver) resolveWithTimeout(query string, unstructuredObjectMap ma
 	return cr.processResult(query, out), nil
 }
 
-func (cr *CELResolver) createEnvironment() (*cel.Env, error) {
-	return cel.NewEnv(
-		cel.CrossTypeNumericComparisons(true),
-		cel.DefaultUTCTimeZone(true),
-		cel.EagerlyValidateDeclarations(true),
-		cel.Function("unixSeconds",
-			cel.Overload("unixSeconds_string",
-				[]*cel.Type{cel.StringType},
-				cel.DoubleType,
-				cel.UnaryBinding(unixSecondsBinding),
+var (
+	celEnv     *cel.Env
+	errCELEnv  error
+	celEnvOnce sync.Once
+)
+
+func getCELEnv() (*cel.Env, error) {
+	celEnvOnce.Do(func() {
+		celEnv, errCELEnv = cel.NewEnv(
+			cel.CrossTypeNumericComparisons(true),
+			cel.DefaultUTCTimeZone(true),
+			cel.EagerlyValidateDeclarations(true),
+			cel.Function("unixSeconds",
+				cel.Overload("unixSeconds_string",
+					[]*cel.Type{cel.StringType},
+					cel.DoubleType,
+					cel.UnaryBinding(unixSecondsBinding),
+				),
 			),
-		),
-		cel.Function("quantity",
-			cel.Overload("quantity_string",
-				[]*cel.Type{cel.StringType},
-				cel.DoubleType,
-				cel.UnaryBinding(quantityBinding),
+			cel.Function("quantity",
+				cel.Overload("quantity_string",
+					[]*cel.Type{cel.StringType},
+					cel.DoubleType,
+					cel.UnaryBinding(quantityBinding),
+				),
 			),
-		),
-		cel.Function("labelPrefix",
-			cel.Overload("labelPrefix_map_string",
-				[]*cel.Type{cel.MapType(cel.StringType, cel.StringType), cel.StringType},
-				cel.MapType(cel.StringType, cel.StringType),
-				cel.BinaryBinding(labelPrefixBinding),
+			cel.Function("labelPrefix",
+				cel.Overload("labelPrefix_map_string",
+					[]*cel.Type{cel.MapType(cel.StringType, cel.StringType), cel.StringType},
+					cel.MapType(cel.StringType, cel.StringType),
+					cel.BinaryBinding(labelPrefixBinding),
+				),
 			),
-		),
-		cel.Function("now",
-			cel.Overload("now_void",
-				[]*cel.Type{},
-				cel.DoubleType,
-				cel.FunctionBinding(nowBinding),
+			cel.Function("now",
+				cel.Overload("now_void",
+					[]*cel.Type{},
+					cel.DoubleType,
+					cel.FunctionBinding(nowBinding),
+				),
 			),
-		),
-	)
+		)
+	})
+
+	return celEnv, errCELEnv
 }
 
 // unixSecondsBinding implements the logic for the unixSeconds function, which
