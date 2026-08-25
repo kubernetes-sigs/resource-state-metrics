@@ -114,7 +114,7 @@ func (cr *CELResolver) Resolve(query string, unstructuredObjectMap map[string]in
 	select {
 	case res := <-resultChan:
 		if res.err != nil {
-			logger.V(1).Info("ignoring resolution for query", "info", res.err)
+			logger.Error(res.err, "CEL query evaluation failed")
 
 			if cr.expressionEvaluationMetric != nil {
 				cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "error").Inc()
