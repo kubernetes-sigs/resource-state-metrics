@@ -831,7 +831,7 @@ families = [
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		if _, err := sr.Resolve(obj); err != nil {
 			b.Fatalf("unexpected error: %v", err)
 		}
