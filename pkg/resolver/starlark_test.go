@@ -798,3 +798,42 @@ families = [family(name="test", help="test", kind="gauge", samples=samples)]
 		t.Errorf("expected 3 samples (deduplicated set), got %d", len(families[0].Samples))
 	}
 }
+
+// BenchmarkStarlarkResolver_Resolve exercises repeated resolution with the
+// same resolver, the pattern the controller follows when generating metrics
+// for every object in a store: the script is fixed, only the object varies.
+func BenchmarkStarlarkResolver_Resolve(b *testing.B) {
+	script := `
+samples = []
+for c in obj["status"]["conditions"]:
+    samples.append(metric(labels={"type": c["type"], "status": c["status"]}, value=1.0))
+families = [
+    family(name="test_conditions", help="Condition states", kind="gauge", samples=samples)
+]
+`
+
+	obj := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"name":      "test-resource",
+			"namespace": "test-ns",
+		},
+		"status": map[string]interface{}{
+			"conditions": []interface{}{
+				map[string]interface{}{"type": "Ready", "status": "True"},
+				map[string]interface{}{"type": "Degraded", "status": "False"},
+				map[string]interface{}{"type": "Progressing", "status": "Unknown"},
+			},
+		},
+	}
+
+	sr := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		if _, err := sr.Resolve(obj); err != nil {
+			b.Fatalf("unexpected error: %v", err)
+		}
+	}
+}
