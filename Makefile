@@ -36,6 +36,9 @@ JSONNETFMT ?= $(GOBIN)/jsonnetfmt
 JSONNET_FILES = $(shell find jsonnet -type f -name "*.jsonnet" -o -name "*.libsonnet")
 JSONNET_MANIFESTS_DIR ?= jsonnet/manifests
 JSONNET_VERSION ?= v0.21.0
+KAL ?= $(GOBIN)/golangci-lint-kube-api-linter
+KAL_CONFIG ?= .golangci-kal.yaml
+KAL_VERSION ?= v0.0.0-20260716143926-092fe0c72997
 KUBECTL ?= kubectl
 LOCAL_NAMESPACE ?= default
 MAIN_METRICS_PORT ?= 9999
@@ -94,6 +97,8 @@ setup:
 	@$(GO) install github.com/Kunde21/markdownfmt/v3/cmd/markdownfmt@$(MARKDOWNFMT_VERSION)
 	# Setup golangci-lint.
 	@$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	# Setup Kube API Linter (KAL).
+	@$(GO) install sigs.k8s.io/kube-api-linter/cmd/golangci-lint-kube-api-linter@$(KAL_VERSION)
 	# Setup controller-gen.
 	@$(GO) install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
 	# Setup code-generator.
@@ -332,11 +337,18 @@ golangci_lint: $(GO_FILES)
 golangci_lint_fix: $(GO_FILES)
 	@$(GOLANGCI_LINT) run --fix -c $(GOLANGCI_LINT_CONFIG)
 
+.PHONY: lint_api
+lint_api: $(GO_FILES)
+	@$(KAL) run --config $(KAL_CONFIG)
+
+lint_api_fix: $(GO_FILES)
+	@$(KAL) run --fix --config $(KAL_CONFIG)
+
 .PHONY: lint_go
-lint_go: licensecheck_go golangci_lint
+lint_go: licensecheck_go golangci_lint lint_api
 
 .PHONY: lint_go_fix
-lint_go_fix: licensecheck_go_fix golangci_lint_fix
+lint_go_fix: licensecheck_go_fix golangci_lint_fix lint_api_fix
 
 ####################
 # Linting: Jsonnet #
