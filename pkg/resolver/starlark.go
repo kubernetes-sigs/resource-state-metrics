@@ -62,6 +62,8 @@ type StarlarkResolver struct {
 	maxSteps int
 }
 
+var _ FamilyResolver = &StarlarkResolver{}
+
 // NewStarlarkResolver creates a new StarlarkResolver.
 func NewStarlarkResolver(logger klog.Logger, script string, timeout time.Duration, maxSteps int) *StarlarkResolver {
 	if timeout == 0 {
