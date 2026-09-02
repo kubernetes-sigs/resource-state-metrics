@@ -140,7 +140,7 @@ func (s *mainServer) build(ctx context.Context, client kubernetes.Interface, _ p
 	// Handle the metrics path.
 	var binarySemaphore sync.RWMutex
 
-	metricsHandler := func(generator func(w http.ResponseWriter)) http.HandlerFunc {
+	metricsHandler := func(generator func(w http.ResponseWriter, ct expfmt.Format)) http.HandlerFunc {
 		return func(writer http.ResponseWriter, request *http.Request) {
 			binarySemaphore.RLock()
 			defer binarySemaphore.RUnlock()
@@ -165,7 +165,7 @@ func (s *mainServer) build(ctx context.Context, client kubernetes.Interface, _ p
 			writer.Header().Set("Content-Type", string(contentType))
 
 			// Generate metrics.
-			generator(writer)
+			generator(writer, contentType)
 
 			// Write the OpenMetrics EOF trailer if the negotiated content type is OpenMetrics
 			if contentType.FormatType() == expfmt.TypeOpenMetrics {
@@ -175,7 +175,7 @@ func (s *mainServer) build(ctx context.Context, client kubernetes.Interface, _ p
 			}
 		}
 	}
-	mux.Handle("/metrics", promhttp.InstrumentHandlerDuration(s.requestsDurationVec, metricsHandler(func(w http.ResponseWriter) {
+	mux.Handle("/metrics", promhttp.InstrumentHandlerDuration(s.requestsDurationVec, metricsHandler(func(w http.ResponseWriter, ct expfmt.Format) {
 		s.stores.Range(func(_, value any) bool {
 			stores, ok := value.([]*StoreType)
 			if !ok {
@@ -184,7 +184,7 @@ func (s *mainServer) build(ctx context.Context, client kubernetes.Interface, _ p
 				return true
 			}
 
-			err := newMetricsWriter(stores...).writeStores(w)
+			err := newMetricsWriter(ct, stores...).writeStores(w)
 			if err != nil {
 				logger.Error(err, "error writing metrics", "source", s.source)
 			}
@@ -196,7 +196,7 @@ func (s *mainServer) build(ctx context.Context, client kubernetes.Interface, _ p
 	// Handle the external path.
 	externalCollectors := external.GetCollectors().SetKubeConfig(s.kubeconfig)
 	externalCollectors.Build(ctx)
-	mux.Handle("/external", promhttp.InstrumentHandlerDuration(s.requestsDurationVec, metricsHandler(func(w http.ResponseWriter) {
+	mux.Handle("/external", promhttp.InstrumentHandlerDuration(s.requestsDurationVec, metricsHandler(func(w http.ResponseWriter, _ expfmt.Format) {
 		externalCollectors.Write(w)
 	})))
 
