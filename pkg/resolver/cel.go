@@ -49,8 +49,8 @@ type CELResolver struct {
 	familyName                 string
 }
 
-// CELResolver implements the Resolver interface.
-var _ Resolver = &CELResolver{}
+// CELResolver implements the ExpressionResolver interface.
+var _ ExpressionResolver = &CELResolver{}
 
 // NewCELResolver returns a new limits-aware CEL resolver.
 func NewCELResolver(logger klog.Logger, costLimit uint64, timeout time.Duration, celEvaluations *prometheus.CounterVec, rmmNamespace, rmmName, familyName string) *CELResolver {
@@ -63,6 +63,11 @@ func NewCELResolver(logger klog.Logger, costLimit uint64, timeout time.Duration,
 		managedRMMName:             rmmName,
 		familyName:                 familyName,
 	}
+}
+
+// SupportsCompositeValues reports whether CELResolver supports composite values.
+func (*CELResolver) SupportsCompositeValues() bool {
+	return true
 }
 
 // costEstimator helps estimate the runtime cost of CEL queries.
