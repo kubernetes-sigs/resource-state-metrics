@@ -405,11 +405,12 @@ func (cr *CELResolver) resolveListInner(list []interface{}, out map[string]strin
 		switch v := v.(type) {
 		case string, int, int64, uint, uint64, float64, bool:
 			out[fieldParent+"#"+strconv.Itoa(i)] = fmt.Sprintf("%v", v)
-		case []interface{}:
-			cr.resolveListInner(v, out, fieldParent)
-		case map[string]interface{}:
-			cr.resolveMapInner(v, out)
 		default:
+			// Composite elements (maps, nested lists) cannot be represented
+			// under the flat `list_name#index` key format. Silently recursing
+			// into them produced bare keys that collided across elements,
+			// silently dropping all but the last element. Skip them instead,
+			// matching the explicit skip used for unsupported output types.
 			cr.logger.V(1).Error(fmt.Errorf("encountered composite value %q at index %d, skipping", v, i), "ignoring resolution for query")
 		}
 	}
@@ -418,7 +419,7 @@ func (cr *CELResolver) resolveListInner(list []interface{}, out map[string]strin
 func (cr *CELResolver) resolveMapInner(m map[string]interface{}, out map[string]string) {
 	for k, v := range m {
 		switch v := v.(type) {
-		case string, int, uint, float64, bool:
+		case string, int, int64, uint, uint64, float64, bool:
 			out[k] = fmt.Sprintf("%v", v)
 		case []interface{}:
 			cr.resolveListInner(v, out, k)
