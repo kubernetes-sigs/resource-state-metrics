@@ -1,0 +1,69 @@
+---
+# Copyright 2026 The Kubernetes resource-state-metrics Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+name: resourcemetricsmonitor-bars-status-mixed
+description: >
+  Tests CEL's resolution of a map whose values are integers. apimachinery
+  decodes JSON whole numbers in unstructured content as int64, so every
+  numeric field under .status arrives as an int64 and is resolved through the
+  map branch rather than the list branch.
+
+  The list alongside the scalars (activeZones) is load-bearing: it supplies the
+  `name#index` keys that give the expansion a non-zero series count, without
+  which no sample is written at all and the map-derived labels are never
+  emitted. A map with no list beside it is suppressed regardless of its value
+  types, which is a separate concern from this rule.
+in:
+  apiVersion: resource-state-metrics.instrumentation.k8s-sigs.io/v1alpha1
+  kind: ResourceMetricsMonitor
+  metadata:
+    name: resourcemetricsmonitor-bars-status-mixed
+    namespace: default
+  spec:
+    configuration:
+      stores:
+        - group: "samplecontroller.k8s.io"
+          version: "v1beta1"
+          kind: "Bar"
+          resource: "bars"
+          families:
+            - name: "bars_status_mixed"
+              help: "Replica counts expanded from .status"
+              metrics:
+                - resolver: "cel"
+                  labels:
+                    - name: "_"
+                      value: "o.status"
+                  value: "o.status.replicas"
+metrics:
+  - '# HELP kube_customresource_bars_status_mixed Replica counts expanded from .status'
+  - '# TYPE kube_customresource_bars_status_mixed gauge'
+  - 'kube_customresource_bars_status_mixed{available_replicas="3",ready_replicas="3",replicas="4",updated_replicas="4",_="us-east-1a",group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample",namespace="default"} 4.000000'
+  - 'kube_customresource_bars_status_mixed{available_replicas="3",ready_replicas="3",replicas="4",updated_replicas="4",_="us-east-1b",group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample",namespace="default"} 4.000000'
+  - 'kube_customresource_bars_status_mixed{available_replicas="2",ready_replicas="2",replicas="2",updated_replicas="1",_="us-east-1a",group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample-secondary",namespace="default"} 2.000000'
+  - 'kube_customresource_bars_status_mixed{available_replicas="2",ready_replicas="2",replicas="2",updated_replicas="1",_="us-east-1b",group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample-secondary",namespace="default"} 2.000000'
+status:
+  cardinality:
+    total: 4
+    thresholdsExceeded: false
+  conditions:
+    - type: Processed
+      status: "True"
+      reason: EventHandlerSucceeded
+    - type: CardinalityCutoff
+      status: "False"
+      reason: CardinalityOK
+    - type: CardinalityWarning
+      status: "False"
+      reason: CardinalityOK

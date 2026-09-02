@@ -418,7 +418,7 @@ func (cr *CELResolver) resolveListInner(list []interface{}, out map[string]strin
 func (cr *CELResolver) resolveMapInner(m map[string]interface{}, out map[string]string) {
 	for k, v := range m {
 		switch v := v.(type) {
-		case string, int, uint, float64, bool:
+		case string, int, int64, uint, uint64, float64, bool:
 			out[k] = fmt.Sprintf("%v", v)
 		case []interface{}:
 			cr.resolveListInner(v, out, k)
