@@ -26,3 +26,4 @@ steps:
       - TAG=$_PULL_BASE_REF
     args:
       - image-push
+serviceAccount: resource-state-metrics-sa@k8s-staging-images.iam.gserviceaccount.com
