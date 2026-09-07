@@ -1,4 +1,11 @@
-SHELL := /bin/bash
+SHELL := $(shell command -v bash 2>/dev/null || echo /bin/sh)
+
+# OS / architecture detection (used by `make setup`)
+# uname -s / -m report differently per OS; Git Bash/MSYS on Windows also
+# expose uname, so this covers Linux, macOS, and Windows-via-Git-Bash/WSL.
+UNAME_S := $(shell uname -s 2>/dev/null || echo Windows)
+UNAME_M := $(shell uname -m 2>/dev/null || echo x86_64)
+IS_WINDOWS := $(filter MINGW% MSYS% CYGWIN% Windows,$(UNAME_S))
 
 ALL_ARCH ?= amd64 arm64
 # A literal comma cannot appear in a $(subst) call because Make parses it as
@@ -49,8 +56,30 @@ PROJECT_NAME = resource-state-metrics
 REGISTRY ?= us-central1-docker.pkg.dev/k8s-staging-images/resource-state-metrics
 TAG ?= $(BUILD_TAG)
 V ?= 4
+# Vale binary name, release-asset name, and archive format all depend on
+# OS + arch. macOS/Linux use tar.gz; Windows releases ship as .zip and the
+# binary is named vale.exe, not vale.
+ifneq ($(IS_WINDOWS),)
+VALE ?= vale.exe
+VALE_ARCH ?= Windows_64-bit
+VALE_EXT ?= zip
+else ifeq ($(UNAME_S),Darwin)
 VALE ?= vale
-VALE_ARCH ?= $(if $(filter $(shell uname -m),arm64),macOS_arm64,Linux_64-bit)
+ifeq ($(UNAME_M),arm64)
+VALE_ARCH ?= macOS_arm64
+else
+VALE_ARCH ?= macOS_64-bit
+endif
+VALE_EXT ?= tar.gz
+else
+VALE ?= vale
+ifneq ($(filter $(UNAME_M),aarch64 arm64),)
+VALE_ARCH ?= Linux_arm64
+else
+VALE_ARCH ?= Linux_64-bit
+endif
+VALE_EXT ?= tar.gz
+endif
 VALE_STYLES_DIR ?= /tmp/.vale/styles
 VALE_VERSION ?= 3.1.0
 YAMLFMT ?= $(GOBIN)/yamlfmt
@@ -81,39 +110,25 @@ all: lint $(PROJECT_NAME)
 #########
 
 .PHONY: setup
-setup:
-	# Setup vale.
-	@if [ ! -f $(ASSETS_DIR)/$(VALE) ]; then wget https://github.com/errata-ai/vale/releases/download/v$(VALE_VERSION)/vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz && \
-    mkdir -p assets && tar -xvzf vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz -C $(ASSETS_DIR) && \
-    rm vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz && \
-    chmod +x $(ASSETS_DIR)/$(VALE); \
-	fi
-	# Setup yq.
-	@$(GO) install github.com/mikefarah/yq/v4@$(YQ_VERSION)
-	# Setup markdownfmt.
-	@$(GO) install github.com/Kunde21/markdownfmt/v3/cmd/markdownfmt@$(MARKDOWNFMT_VERSION)
-	# Setup golangci-lint.
-	@$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
-	# Setup controller-gen.
-	@$(GO) install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
-	# Setup code-generator.
-	@$(GO) install k8s.io/code-generator/cmd/...@$(CODE_GENERATOR_VERSION)
-	# Setup checkmake.
-	@$(GO) install github.com/checkmake/checkmake/cmd/checkmake@$(CHECKMAKE_VERSION)
-	# Setup jsonnet.
-	@$(GO) install github.com/google/go-jsonnet/cmd/jsonnet@$(JSONNET_VERSION)
-	@$(GO) install github.com/google/go-jsonnet/cmd/jsonnetfmt@$(JSONNET_VERSION)
-	@$(GO) install github.com/brancz/gojsontoyaml@$(GOJSONTOYAML_VERSION)
-	# Setup yamlfmt.
-	@$(GO) install github.com/google/yamlfmt/cmd/yamlfmt@$(YAMLFMT_VERSION)
-	# Setup pre-commit hooks.
-	@$(PIPX) install pre-commit >/dev/null || \
-		(printf "pipx is required to install pre-commit. Please install pipx, or an alternate pip package, for e.g., pip3, and run 'make setup' (with PIPX in the latter case, where pipx is not used) again.\n" && exit 1)
-	@pre-commit install --hook-type commit-msg >/dev/null
-	# Setup commit message template.
-	@# --always-make: Ensure .gitmessage is always updated at setup.
+setup: setup_vale setup_go_tools setup_precommit
 	@$(MAKE) --always-make --no-print-directory -s .gitmessage
 	@git config commit.template .gitmessage
+
+.PHONY: setup_vale
+setup_vale:
+	# Setup vale
+	@if [ ! -f $(ASSETS_DIR)/$(VALE) ]; then set -e; mkdir -p $(ASSETS_DIR); tmp=$$(mktemp -d); url="https://github.com/errata-ai/vale/releases/download/v$(VALE_VERSION)/vale_$(VALE_VERSION)_$(VALE_ARCH).$(VALE_EXT)"; archive="$$tmp/vale.$(VALE_EXT)"; if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$$archive" "$$url"; elif command -v wget >/dev/null 2>&1; then wget -q -O "$$archive" "$$url"; else echo "Neither curl nor wget is installed. Please install one and re-run 'make setup'." >&2; exit 1; fi; if [ "$(VALE_EXT)" = "zip" ]; then command -v unzip >/dev/null 2>&1 || (echo "unzip is required to install vale on Windows." >&2 && exit 1); unzip -oq "$$archive" -d $(ASSETS_DIR); else tar -xzf "$$archive" -C $(ASSETS_DIR); fi; chmod +x $(ASSETS_DIR)/$(VALE) 2>/dev/null || true; rm -rf "$$tmp"; fi
+
+.PHONY: setup_go_tools
+setup_go_tools:
+	# Setup Go tools
+	@$(GO) install github.com/mikefarah/yq/v4@$(YQ_VERSION) && $(GO) install github.com/Kunde21/markdownfmt/v3/cmd/markdownfmt@$(MARKDOWNFMT_VERSION) && $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) && $(GO) install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) && $(GO) install k8s.io/code-generator/cmd/...@$(CODE_GENERATOR_VERSION) && $(GO) install github.com/checkmake/checkmake/cmd/checkmake@$(CHECKMAKE_VERSION) && $(GO) install github.com/google/go-jsonnet/cmd/jsonnet@$(JSONNET_VERSION) && $(GO) install github.com/google/go-jsonnet/cmd/jsonnetfmt@$(JSONNET_VERSION) && $(GO) install github.com/brancz/gojsontoyaml@$(GOJSONTOYAML_VERSION) && $(GO) install github.com/google/yamlfmt/cmd/yamlfmt@$(YAMLFMT_VERSION)
+
+.PHONY: setup_precommit
+setup_precommit:
+	# Setup pre-commits
+	@if command -v $(PIPX) >/dev/null 2>&1; then $(PIPX) install pre-commit >/dev/null; elif command -v pre-commit >/dev/null 2>&1; then :; elif command -v pip3 >/dev/null 2>&1; then pip3 install --user pre-commit >/dev/null 2>&1 || pip3 install --user --break-system-packages pre-commit >/dev/null; elif command -v pip >/dev/null 2>&1; then pip install --user pre-commit >/dev/null 2>&1 || pip install --user --break-system-packages pre-commit >/dev/null; else echo "Could not find pipx, pre-commit, pip3, or pip. Install one of these and re-run 'make setup'." >&2; exit 1; fi
+	@python3 -m pre_commit install --hook-type commit-msg >/dev/null 2>&1 || pre-commit install --hook-type commit-msg >/dev/null
 
 .gitmessage: hack/check-conventional-commit.sh
 	@types=$$(grep 'ALLOWED_TYPES=' $< | cut -d'"' -f2 | tr '|' ' '); \
@@ -212,7 +227,7 @@ local: apply $(PROJECT_NAME)
 
 .PHONY: pprof
 pprof:
-	@go tool pprof ":$(PPROF_PORT)" $(PPROF_OPTIONS)
+	@$(GO) tool pprof ":$(PPROF_PORT)" $(PPROF_OPTIONS)
 
 .PHONY: test_unit
 test_unit:
@@ -367,4 +382,3 @@ lint_jsonnet_fix: licensecheck_jsonnet_fix jsonnetfmt_fix
 .PHONY: clean
 clean:
 	@git clean -fxd
-
