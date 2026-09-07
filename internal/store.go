@@ -133,12 +133,49 @@ func (s *StoreType) Delete(objectI interface{}) error {
 }
 
 // Replace is called when the reflector does a resync or starts up and lists all existing objects.
+// It atomically replaces the full metrics set with the incoming items, removing any entries for
+// objects that have been deleted since the last list. The CardinalityTracker is reset and rebuilt
+// from scratch so that cardinality counts reflect only live objects.
 func (s *StoreType) Replace(items []interface{}, _ string) error {
-	for _, item := range items {
-		if err := s.Add(item); err != nil {
-			s.logger.Error(err, "failed to add item during replace")
-		}
+	// Hold the write lock for the entire Replace to match the locking contract
+	// of Add/Delete: generateMetricsForObject mutates family.Labels and
+	// family.logger in place, so it must not run concurrently with other
+	// store operations.
+	s.mutex.Lock()
+
+	newMetrics := make(map[types.UID][]string, len(items))
+
+	if s.cardinalityTracker != nil {
+		s.cardinalityTracker.Reset()
 	}
+
+	for _, item := range items {
+		obj, err := convertToUnstructured(item)
+		if err != nil {
+			s.logger.Error(err, "failed to convert item during replace")
+
+			continue
+		}
+
+		result := s.generateMetricsForObject(obj)
+		newMetrics[obj.GetUID()] = result.metrics
+
+		if s.cardinalityTracker != nil {
+			s.cardinalityTracker.Update(obj.GetUID(), result.perFamily)
+		}
+
+		s.logger.V(2).Info("Replace", "key", klog.KObj(obj))
+	}
+
+	// Atomically swap in the fresh map; any UID absent from items (i.e. the
+	// object was deleted between reflector lists) is no longer served.
+	s.metrics = newMetrics
+
+	if s.cardinalityTracker != nil {
+		s.checkAndApplyThresholds()
+	}
+
+	s.mutex.Unlock()
 
 	s.synced.Store(true)
 
@@ -221,8 +258,6 @@ func inheritFamilyConfiguration(f *FamilyType, s *StoreType) {
 	if f.Resolver == v1alpha1.ResolverTypeNone {
 		f.Resolver = s.Resolver
 	}
-
-	f.Labels = append(f.Labels, s.Labels...)
 }
 
 // checkAndApplyThresholds checks cardinality thresholds and applies cutoffs to families.

@@ -18,6 +18,7 @@ package internal
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
@@ -415,5 +416,93 @@ func TestResolveMetricValue(t *testing.T) {
 				t.Errorf("expanded values mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestMergeLabels_PrecedenceAndDeduplication(t *testing.T) {
+	t.Parallel()
+
+	storeLabels := []v1alpha1.Label{
+		{Name: "env", Value: "production"},
+		{Name: "cluster", Value: "us-east-1"},
+	}
+
+	familyLabels := []v1alpha1.Label{
+		{Name: "env", Value: "staging"}, // Overrides store
+		{Name: "tier", Value: "backend"},
+	}
+
+	metricLabels := []v1alpha1.Label{
+		{Name: "env", Value: "dev"}, // Overrides family & store
+		{Name: "app", Value: "my-app"},
+	}
+
+	got := mergeLabels(storeLabels, familyLabels, metricLabels)
+
+	want := []v1alpha1.Label{
+		{Name: "env", Value: "dev"},
+		{Name: "cluster", Value: "us-east-1"},
+		{Name: "tier", Value: "backend"},
+		{Name: "app", Value: "my-app"},
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("mergeLabels() mismatch (-want +got):\n%s", diff)
+	}
+
+	// Verify original inputs were not mutated
+	if storeLabels[0].Value != "production" {
+		t.Errorf("storeLabels mutated: got %s, want production", storeLabels[0].Value)
+	}
+
+	if familyLabels[0].Value != "staging" {
+		t.Errorf("familyLabels mutated: got %s, want staging", familyLabels[0].Value)
+	}
+}
+
+func TestFamily_StarlarkLabelInheritance(t *testing.T) {
+	t.Parallel()
+
+	script := `
+samples = [
+    metric(labels={"custom": "val"}, value=1.0)
+]
+families = [
+    family(name="test_starlark", help="help", kind="gauge", samples=samples)
+]
+`
+	starlarkRes := resolver.NewStarlarkResolver(klog.Background(), script, 5*time.Second, 10000)
+
+	fam := &FamilyType{
+		Family: v1alpha1.Family{
+			Name: "test_starlark",
+			Help: "help",
+			Labels: []v1alpha1.Label{
+				{Name: "fam_label", Value: "fam_val"},
+			},
+		},
+		starlarkResolver: starlarkRes,
+		storeLabels: []v1alpha1.Label{
+			{Name: "store_label", Value: "store_val"},
+		},
+	}
+
+	unstructuredObj := makeUnstructured("uid-starlark", "pod-starlark", "default")
+	metricStr, count := fam.buildMetricString(unstructuredObj)
+
+	if count != 1 {
+		t.Fatalf("expected count 1, got %d", count)
+	}
+
+	if !strings.Contains(metricStr, "store_label=\"store_val\"") {
+		t.Errorf("expected store_label in Starlark metric output, got:\n%s", metricStr)
+	}
+
+	if !strings.Contains(metricStr, "fam_label=\"fam_val\"") {
+		t.Errorf("expected fam_label in Starlark metric output, got:\n%s", metricStr)
+	}
+
+	if !strings.Contains(metricStr, "custom=\"val\"") {
+		t.Errorf("expected custom sample label in Starlark metric output, got:\n%s", metricStr)
 	}
 }
