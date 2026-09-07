@@ -417,11 +417,15 @@ func sortLabels(keys []string, parallel ...[]string) {
 func collectIndexedResolvedValues(resolved map[string]string) []string {
 	// An index can only belong to the contiguous run starting at #0 if it is
 	// smaller than the total number of keys, so flat slices of len(resolved)
-	// suffice to stage the values.
-	staged := make([]string, len(resolved))
-	present := make([]bool, len(resolved))
+	// suffice to stage the values. They are allocated lazily, on the first
+	// index actually seen, so that resolutions without indexed keys (scalars
+	// and map expansions, the common case) stay allocation-free.
+	var (
+		staged  []string
+		present []bool
+	)
 
-	for k, v := range resolved {
+	for k, value := range resolved {
 		hash := strings.LastIndexByte(k, '#')
 		if hash < 0 {
 			continue
@@ -435,11 +439,16 @@ func collectIndexedResolvedValues(resolved map[string]string) []string {
 		}
 
 		i, err := strconv.Atoi(suffix)
-		if err != nil || i >= len(staged) {
+		if err != nil || i >= len(resolved) {
 			continue
 		}
 
-		staged[i] = v
+		if staged == nil {
+			staged = make([]string, len(resolved))
+			present = make([]bool, len(resolved))
+		}
+
+		staged[i] = value
 		present[i] = true
 	}
 
