@@ -203,32 +203,49 @@ func (ct *CardinalityTracker) CheckThresholds() []ThresholdViolation {
 		}
 	}
 
-	if ct.storeThreshold > 0 {
-		ratio := float64(ct.storeTotal) / float64(ct.storeThreshold)
-		if ratio > 1.0 {
-			for family := range ct.perFamily {
-				ct.cutoffFamilies[family] = true
-			}
-
-			violations = append(violations, ThresholdViolation{
-				Level:     ThresholdLevelStore,
-				Name:      "store",
-				Current:   ct.storeTotal,
-				Threshold: ct.storeThreshold,
-				Severity:  SeverityCutoff,
-			})
-		} else if ratio >= ct.warningRatio {
-			violations = append(violations, ThresholdViolation{
-				Level:     ThresholdLevelStore,
-				Name:      "store",
-				Current:   ct.storeTotal,
-				Threshold: ct.storeThreshold,
-				Severity:  SeverityWarning,
-			})
-		}
-	}
+	ct.checkStoreThreshold(&violations)
 
 	return violations
+}
+
+func (ct *CardinalityTracker) checkStoreThreshold(violations *[]ThresholdViolation) {
+	if ct.storeThreshold <= 0 {
+		return
+	}
+
+	ratio := float64(ct.storeTotal) / float64(ct.storeThreshold)
+	if ratio > 1.0 {
+		for family := range ct.perFamily {
+			ct.cutoffFamilies[family] = true
+		}
+
+		*violations = append(*violations, ThresholdViolation{
+			Level:     ThresholdLevelStore,
+			Name:      "store",
+			Current:   ct.storeTotal,
+			Threshold: ct.storeThreshold,
+			Severity:  SeverityCutoff,
+		})
+
+		return
+	}
+
+	if ratio >= ct.warningRatio {
+		*violations = append(*violations, ThresholdViolation{
+			Level:     ThresholdLevelStore,
+			Name:      "store",
+			Current:   ct.storeTotal,
+			Threshold: ct.storeThreshold,
+			Severity:  SeverityWarning,
+		})
+	}
+
+	for family, count := range ct.perFamily {
+		threshold, hasThreshold := ct.familyThreshold[family]
+		if !hasThreshold || threshold <= 0 || float64(count)/float64(threshold) <= 1.0 {
+			ct.cutoffFamilies[family] = false
+		}
+	}
 }
 
 // IsFamilyCutoff returns whether a specific family is cut off.
