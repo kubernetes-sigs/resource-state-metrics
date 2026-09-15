@@ -19,7 +19,9 @@ package resolver
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/metricutil"
@@ -52,6 +54,32 @@ type ResolvedFamily struct {
 	Samples []ResolvedSample
 }
 
+// starlarkPredeclared holds the fixed set of predeclared built-ins available
+// to every script. The per-object "obj" binding is added to a copy of this
+// dict on each Resolve call.
+var starlarkPredeclared = starlark.StringDict{
+	"quantity_to_float": starlark.NewBuiltin("quantity_to_float", quantityToFloat),
+	"metric":            starlark.NewBuiltin("metric", metricBuiltin),
+	"family":            starlark.NewBuiltin("family", familyBuiltin),
+	"label_prefix":      starlark.NewBuiltin("label_prefix", labelPrefixBuiltin),
+	// time module provides time.now(), time.parse_time(s), durations, etc.
+	// See https://github.com/google/starlark-go/blob/master/lib/time/time.go.
+	"time": startime.Module,
+}
+
+// starlarkFileOptions are the "go.starlark.net/syntax.FileOptions" enabled for
+// script compilation:
+// * `GlobalReassign`: Allow reassigning global variables in the script.
+// * `Set`: Allow using the `set` statement in the script.
+// * `TopLevelControl`: Allow using control flow statements (if, for, while) at the top level of the script.
+// * `While`: Allow using `while` loops in the script.
+var starlarkFileOptions = &syntax.FileOptions{
+	GlobalReassign:  true,
+	Set:             true,
+	TopLevelControl: true,
+	While:           true,
+}
+
 // StarlarkResolver executes Starlark scripts to resolve metrics.
 // Unlike CEL and unstructured resolvers that evaluate individual expressions,
 // Starlark resolves complete metric families from a script.
@@ -60,6 +88,14 @@ type StarlarkResolver struct {
 	script   string
 	timeout  time.Duration
 	maxSteps int
+
+	// compileOnce guards the one-time compilation of script into program.
+	// The script never changes for a given resolver, so parsing and
+	// compiling it on every Resolve call is pure overhead; the compiled
+	// *starlark.Program is immutable and safe for concurrent reuse.
+	compileOnce sync.Once
+	program     *starlark.Program
+	compileErr  error
 }
 
 // NewStarlarkResolver creates a new StarlarkResolver.
@@ -81,11 +117,8 @@ func NewStarlarkResolver(logger klog.Logger, script string, timeout time.Duratio
 }
 
 // Resolve executes the Starlark script with the given object and returns resolved families.
-// NOTE: The following "go.starlark.net/syntax.FileOptions" are enabled for "go.starlark.net/starlark.ExecFileOptions" (script execution):
-// * `GlobalReassign`: Allow reassigning global variables in the script.
-// * `Set`: Allow using the `set` statement in the script.
-// * `TopLevelControl`: Allow using control flow statements (if, for, while) at the top level of the script.
-// * `While`: Allow using `while` loops in the script.
+// The script is compiled once (see starlarkFileOptions for the enabled syntax
+// options) and only executed on each call.
 func (sr *StarlarkResolver) Resolve(obj map[string]interface{}) ([]ResolvedFamily, error) {
 	type result struct {
 		families []ResolvedFamily
@@ -122,15 +155,33 @@ func (sr *StarlarkResolver) Resolve(obj map[string]interface{}) ([]ResolvedFamil
 	}
 }
 
+// compiledProgram parses and compiles the resolver's script exactly once and
+// reuses the resulting program across all subsequent Resolve calls. A
+// compilation failure is likewise sticky and returned on every call.
+func (sr *StarlarkResolver) compiledProgram() (*starlark.Program, error) {
+	sr.compileOnce.Do(func() {
+		isPredeclared := func(name string) bool {
+			_, ok := starlarkPredeclared[name]
+			return name == "obj" || ok
+		}
+
+		_, program, err := starlark.SourceProgramOptions(starlarkFileOptions, "script.star", sr.script, isPredeclared)
+		if err != nil {
+			sr.compileErr = fmt.Errorf("starlark compilation error: %w", err)
+
+			return
+		}
+
+		sr.program = program
+	})
+
+	return sr.program, sr.compileErr
+}
+
 func (sr *StarlarkResolver) resolveWithSteps(thread *starlark.Thread, obj map[string]interface{}) ([]ResolvedFamily, error) {
-	predeclared := starlark.StringDict{
-		"quantity_to_float": starlark.NewBuiltin("quantity_to_float", quantityToFloat),
-		"metric":            starlark.NewBuiltin("metric", metricBuiltin),
-		"family":            starlark.NewBuiltin("family", familyBuiltin),
-		"label_prefix":      starlark.NewBuiltin("label_prefix", labelPrefixBuiltin),
-		// time module provides time.now(), time.parse_time(s), durations, etc.
-		// See https://github.com/google/starlark-go/blob/master/lib/time/time.go.
-		"time": startime.Module,
+	program, err := sr.compiledProgram()
+	if err != nil {
+		return nil, err
 	}
 
 	objValue, err := goToStarlark(obj)
@@ -138,14 +189,16 @@ func (sr *StarlarkResolver) resolveWithSteps(thread *starlark.Thread, obj map[st
 		return nil, fmt.Errorf("failed to convert object to Starlark: %w", err)
 	}
 
+	predeclared := make(starlark.StringDict, len(starlarkPredeclared)+1)
+	maps.Copy(predeclared, starlarkPredeclared)
 	predeclared["obj"] = objValue
 
-	globals, err := starlark.ExecFileOptions(&syntax.FileOptions{
-		GlobalReassign:  true,
-		Set:             true,
-		TopLevelControl: true,
-		While:           true,
-	}, thread, "script.star", sr.script, predeclared)
+	globals, err := program.Init(thread, predeclared)
+	// Freeze the globals irrespective of the execution outcome, mirroring
+	// starlark.ExecFileOptions.
+	if globals != nil {
+		globals.Freeze()
+	}
 	if err != nil {
 		var evalErr *starlark.EvalError
 		if errors.As(err, &evalErr) {
