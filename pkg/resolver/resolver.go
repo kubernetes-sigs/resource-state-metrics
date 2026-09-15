@@ -28,3 +28,8 @@ type Resolver interface {
 	// TODO: All behavioral traits between resolvers must be surfaced here.
 	// underscoreExpansionSupported() bool
 }
+
+// FamilyResolver defines behavior for resolving complete metric families.
+type FamilyResolver interface {
+	Resolve(unstructuredObjectMap map[string]interface{}) ([]ResolvedFamily, error)
+}
