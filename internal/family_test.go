@@ -16,6 +16,7 @@ limitations under the License.
 package internal
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -327,6 +328,14 @@ func Test_collectIndexedResolvedValues(t *testing.T) {
 			},
 			want: []string{"alpha"},
 		},
+		{
+			name: "no indexed keys returns nil",
+			resolved: map[string]string{
+				"app":      "test",
+				"env_type": "prod",
+			},
+			want: nil,
+		},
 	}
 
 	for _, tt := range tests {
@@ -415,5 +424,48 @@ func TestResolveMetricValue(t *testing.T) {
 				t.Errorf("expanded values mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+// BenchmarkCollectIndexedResolvedValues exercises list expansion with a large
+// resolved set, as produced when a query resolves a long list field (e.g.
+// hundreds of conditions, versions, or addresses).
+func BenchmarkCollectIndexedResolvedValues(b *testing.B) {
+	const size = 512
+
+	resolved := make(map[string]string, size)
+	for i := range size {
+		resolved["field#"+strconv.Itoa(i)] = "value"
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for range b.N {
+		if got := collectIndexedResolvedValues(resolved); len(got) != size {
+			b.Fatalf("expected %d values, got %d", size, len(got))
+		}
+	}
+}
+
+// BenchmarkCollectIndexedResolvedValuesNonIndexed exercises the common case of
+// a resolved set with no indexed keys, as produced by scalar queries and by
+// map-expansion labels. The staging slices are allocated lazily, so this path
+// must not allocate at all.
+func BenchmarkCollectIndexedResolvedValuesNonIndexed(b *testing.B) {
+	const size = 512
+
+	resolved := make(map[string]string, size)
+	for i := range size {
+		resolved["field"+strconv.Itoa(i)] = "value"
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for range b.N {
+		if got := collectIndexedResolvedValues(resolved); got != nil {
+			b.Fatalf("expected no values, got %d", len(got))
+		}
 	}
 }
