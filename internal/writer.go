@@ -18,30 +18,36 @@ package internal
 import (
 	"fmt"
 	"io"
+
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
 )
 
 // metricsWriter writes metrics from a group of stores to an io.Writer.
 type metricsWriter struct {
-	stores []*StoreType
+	stores      []*StoreType
+	contentType expfmt.Format
 }
 
 // newMetricsWriter creates a new metricsWriter.
-func newMetricsWriter(stores ...*StoreType) *metricsWriter {
+func newMetricsWriter(contentType expfmt.Format, stores ...*StoreType) *metricsWriter {
 	return &metricsWriter{
-		stores: stores,
+		stores:      stores,
+		contentType: contentType,
 	}
 }
 
-// writeStores writes out metrics from the underlying stores to the given writer, per resource.
-// It writes metrics so that the ones with the same name are grouped together when written out, and guarantees an exposition format that is safe to be ingested by Prometheus.
+// writeStores encodes metrics from all stores using the negotiated content type.
 func (m *metricsWriter) writeStores(writer io.Writer) error {
 	if len(m.stores) == 0 {
 		return nil
 	}
 
+	enc := expfmt.NewEncoder(writer, m.contentType)
+
 	for _, store := range m.stores {
 		store.mutex.RLock()
-		err := m.writeFromStore(writer, store)
+		err := m.writeFromStore(enc, store)
 		store.mutex.RUnlock()
 
 		if err != nil {
@@ -52,48 +58,39 @@ func (m *metricsWriter) writeStores(writer io.Writer) error {
 	return nil
 }
 
-func (m *metricsWriter) writeFromStore(writer io.Writer, store *StoreType) error {
-	for i, header := range store.headers {
-		if err := writeHeader(writer, header); err != nil {
-			return fmt.Errorf("error writing header: %w", err)
-		}
+func (m *metricsWriter) writeFromStore(enc expfmt.Encoder, store *StoreType) error {
+	for i, family := range store.Families {
+		var allMetrics []*dto.Metric
 
-		for _, metricFamilies := range store.metrics {
-			if i >= len(metricFamilies) {
-				continue
-			}
-
-			if err := writeMetricFamily(writer, metricFamilies[i]); err != nil {
-				return err
+		for _, perFamilyMetrics := range store.metrics {
+			if i < len(perFamilyMetrics) && perFamilyMetrics[i] != nil {
+				allMetrics = append(allMetrics, perFamilyMetrics[i].Metric...)
 			}
 		}
 
-		if i < len(store.Families) {
-			if ph := store.Families[i].buildPeripheralHeader(); ph != "" {
-				if err := writeHeader(writer, ph); err != nil {
-					return fmt.Errorf("error writing peripheral header: %w", err)
-				}
+		if len(allMetrics) == 0 {
+			continue
+		}
+
+		familyName := kubeCustomResourcePrefix + family.Name
+		helpText := family.Help
+		dtoType := dtoTypeFor(family.kind())
+		mf := &dto.MetricFamily{
+			Name:   &familyName,
+			Help:   &helpText,
+			Type:   &dtoType,
+			Metric: allMetrics,
+		}
+
+		if err := enc.Encode(mf); err != nil {
+			return fmt.Errorf("error encoding metric family %q: %w", family.Name, err)
+		}
+
+		if pf := family.buildPeripheralFamily(); pf != nil {
+			if err := enc.Encode(pf); err != nil {
+				return fmt.Errorf("error encoding peripheral family %q: %w", family.Name, err)
 			}
 		}
-	}
-
-	return nil
-}
-
-func writeHeader(writer io.Writer, header string) error {
-	if header != "" && header != "\n" {
-		header += "\n"
-	}
-
-	_, err := writer.Write([]byte(header))
-
-	return err
-}
-
-func writeMetricFamily(writer io.Writer, metric string) error {
-	n, err := writer.Write([]byte(metric))
-	if err != nil {
-		return fmt.Errorf("error writing metric family after %d bytes: %w", n, err)
 	}
 
 	return nil
