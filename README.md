@@ -19,6 +19,46 @@ Start developing by following these steps:
 
 For more details, take a look at the [Makefile](Makefile) targets.
 
+### Testing
+
+All tests can be run with `make test`. The tests are divided into three categories:
+
+#### Unit Tests
+
+Standard unit tests that test the functionality of the codebase.
+
+```bash
+make test_unit
+```
+
+#### End-to-End Tests
+
+Tests cardinality, telemetry metrics, and status updates of the `ResourceMetricsMonitor` CRD. It also tests all golden rules for all resolvers.
+
+These tests are using fake client-sets and do not require a running Kubernetes cluster.
+
+```bash
+make test_e2e
+```
+
+#### Compare Metrics Tests
+
+The `TestCompareMetrics` test is a test that compares the generated metrics from a running controller with the expected metrics defined in the `testdata`.
+
+```bash
+make test_compare_metrics
+```
+
+Per default the tests will use [`envtest`](https://github.com/kubernetes-sigs/controller-runtime/tree/main/pkg/envtest) to start a temporary Kubernetes API server and `etcd` instance. If you want to run the tests against an existing cluster, you can use the `envtest` supported environment variable `USE_EXISTING_CLUSTER` and set it to `true`.
+
+> [!WARNING] In this case, the current context of your `kubeconfig` will be used to connect to the cluster.
+
+> [!NOTE] No cleanup of the `testdata` will be done in this case.
+
+```bash
+USE_EXISTING_CLUSTER=true make test_compare_metrics
+```
+
 ## Notes
 
 - Garbage in, garbage out: Invalid configurations will generate invalid metrics. The exception to this being that certain checks that ensure metric structure are still present (for e.g., `value` should be a `float64`).

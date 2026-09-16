@@ -47,6 +47,7 @@ PPROF_OPTIONS ?=
 PPROF_PORT ?= 9998
 PROJECT_NAME = resource-state-metrics
 REGISTRY ?= us-central1-docker.pkg.dev/k8s-staging-images/resource-state-metrics
+SETUP_ENVTEST ?= $(GOBIN)/setup-envtest
 TAG ?= $(BUILD_TAG)
 V ?= 4
 VALE ?= vale
@@ -58,6 +59,10 @@ YAMLFMT_VERSION ?= v0.16.0
 YAML_FILES = $(shell find . -type d -name vendor -prune -o -type d -name $(patsubst %/,%,$(patsubst ./%,%,$(ASSETS_DIR))) -prune -o \( -name "*.yaml" -o -name "*.yml" \) -print | grep -v "^./vendor" | grep -v "^./$(ASSETS_DIR)")
 YQ ?= $(GOBIN)/yq
 YQ_VERSION ?= v4.52.4
+SETUP_ENVTEST_VERSION ?= release-0.23
+# ENVTEST_K8S_VERSION is set to the version of k8s.io/api in go.mod
+# convert e.g. v0.32.3 to 1.32
+ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'.' '{printf "1.%d.x", $$2}')
 
 BRANCH = $(shell git rev-parse --abbrev-ref HEAD)
 BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
@@ -96,6 +101,8 @@ setup:
 	@$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	# Setup controller-gen.
 	@$(GO) install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
+	# Setup setup-envtest.
+	@$(GO) install sigs.k8s.io/controller-runtime/tools/setup-envtest@$(SETUP_ENVTEST_VERSION)
 	# Setup code-generator.
 	@$(GO) install k8s.io/code-generator/cmd/...@$(CODE_GENERATOR_VERSION)
 	# Setup checkmake.
@@ -216,42 +223,34 @@ pprof:
 
 .PHONY: test_unit
 test_unit:
-	@$(GO) test -v -race $(shell go list ./... | \
+	@$(GO) test -count=1 -v -race $(shell go list ./... | \
 		grep -v "/generated" | \
 		grep -v "/signals" | \
 		grep -v "/tests" | \
 		grep -v "/version")
 
+.PHONY: test_e2e_fake
+test_e2e_fake:
+	@$(GO) test -count=1 -v -race ./tests/fake/...
+
+# TODO: bavarianbidi
+# install the kube-apiserver and etcd-binary to the LOCALBIN folder
+# this requires the "lazytool" implementation of https://github.com/kubernetes-sigs/resource-state-metrics/issues/37
+.PHONY: test_e2e_envtest
+test_e2e_envtest:
+	@KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(GOBIN) -p path)" \
+	$(GO) test -race -v -count=1 -timeout 120s ./tests/envtest/ -run TestE2EEnvtest
+
+.PHONY: test_e2e_envtest_kind
+test_e2e_envtest_kind:
+	@USE_EXISTING_CLUSTER=true \
+	$(GO) test -race -v -count=1 -timeout 120s ./tests/envtest/ -run TestE2EEnvtest
+
 .PHONY: test_e2e
-test_e2e:
-	@$(GO) test -v -race ./tests/...
+test_e2e: test_e2e_fake test_e2e_envtest
 
 .PHONY: test
 test: test_unit test_e2e
-
-.PHONY: apply_testdata
-apply_testdata: delete_testdata
-	# Applying testdata
-	@$(KUBECTL) apply -R -f tests/manifests/custom-resource-definition
-	@$(KUBECTL) apply -R -f tests/manifests/custom-resource
-	@$(YQ) '.in' $(GOLDEN_FILES) | $(KUBECTL) apply -f -
-	# Applied testdata
-
-.PHONY: delete_testdata
-delete_testdata:
-	# Deleting testdata
-	-@$(KUBECTL) delete --ignore-not-found -R -f tests/manifests
-	# Deleted testdata
-
-.PHONY: golden_metrics
-golden_metrics: $(GOLDEN_FILES)
-	@$(YQ) --no-doc '.out.metrics[]' $(GOLDEN_FILES) > $(GOLDEN_METRICS_FILE)
-
-.PHONY: compare_metrics
-compare_metrics: golden_metrics
-	@diff \
-		<(sort $(GOLDEN_METRICS_FILE)) \
-		<(curl -sf http://localhost:$(MAIN_METRICS_PORT)/metrics | grep -Ff $(GOLDEN_METRICS_FILE) | sort)
 
 ###########
 # Linting #
