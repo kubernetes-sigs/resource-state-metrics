@@ -38,9 +38,19 @@ func (in *CardinalityStatus) DeepCopyInto(out *CardinalityStatus) {
 	}
 	if in.PerFamily != nil {
 		in, out := &in.PerFamily, &out.PerFamily
-		*out = make(map[string]int64, len(*in))
+		*out = make(map[string]map[string]int64, len(*in))
 		for key, val := range *in {
-			(*out)[key] = val
+			var outVal map[string]int64
+			if val == nil {
+				(*out)[key] = nil
+			} else {
+				in, out := &val, &outVal
+				*out = make(map[string]int64, len(*in))
+				for key, val := range *in {
+					(*out)[key] = val
+				}
+			}
+			(*out)[key] = outVal
 		}
 	}
 	if in.CutoffFamilies != nil {

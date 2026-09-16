@@ -301,8 +301,8 @@ type CardinalityStatus struct {
 	// PerStore maps store identifiers (group/version/kind) to their cardinality.
 	PerStore map[string]int64 `json:"perStore,omitempty"`
 
-	// PerFamily maps family names to their cardinality.
-	PerFamily map[string]int64 `json:"perFamily,omitempty"`
+	// PerFamily maps store identifiers to a map of family names and their cardinality.
+	PerFamily map[string]map[string]int64 `json:"perFamily,omitempty"`
 
 	// ThresholdsExceeded indicates whether any cardinality threshold has been exceeded.
 	ThresholdsExceeded bool `json:"thresholdsExceeded"`
