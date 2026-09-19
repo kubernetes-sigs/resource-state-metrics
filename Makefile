@@ -41,11 +41,15 @@ LOCAL_NAMESPACE ?= default
 MAIN_METRICS_PORT ?= 9999
 MARKDOWNFMT ?= $(GOBIN)/markdownfmt
 MARKDOWNFMT_VERSION ?= v3.1.0
+MDTOC ?= $(GOBIN)/mdtoc
+MDTOC_VERSION ?= v1.4.0
 MD_FILES = $(shell find . \( -type d -name 'vendor' -o -type d -name $(patsubst %/,%,$(patsubst ./%,%,$(ASSETS_DIR))) \) -prune -o -type f -name "*.md" -print)
 PIPX ?= pipx
 PPROF_OPTIONS ?=
 PPROF_PORT ?= 9998
 PROJECT_NAME = resource-state-metrics
+PROPOSALS_DIR ?= proposals
+PROPOSAL_FILES = $(shell find $(PROPOSALS_DIR) -type f -name "*.md")
 REGISTRY ?= us-central1-docker.pkg.dev/k8s-staging-images/resource-state-metrics
 TAG ?= $(BUILD_TAG)
 V ?= 4
@@ -92,6 +96,8 @@ setup:
 	@$(GO) install github.com/mikefarah/yq/v4@$(YQ_VERSION)
 	# Setup markdownfmt.
 	@$(GO) install github.com/Kunde21/markdownfmt/v3/cmd/markdownfmt@$(MARKDOWNFMT_VERSION)
+	# Setup mdtoc.
+	@$(GO) install sigs.k8s.io/mdtoc@$(MDTOC_VERSION)
 	# Setup golangci-lint.
 	@$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	# Setup controller-gen.
@@ -310,11 +316,18 @@ markdownfmt: $(MD_FILES)
 markdownfmt_fix: $(MD_FILES)
 	@for file in $(MD_FILES); do markdownfmt -w -gofmt $$file || exit 1; done
 
+proposals_toc: $(PROPOSAL_FILES)
+	@$(MDTOC) --inplace --max-depth=5 $(PROPOSAL_FILES)
+
+proposals_toc_check: $(PROPOSAL_FILES)
+	@$(MDTOC) --inplace --max-depth=5 --dryrun $(PROPOSAL_FILES) || \
+		(echo "Proposal tables of contents are out of date. Run 'make proposals_toc' to fix." && exit 1)
+
 .PHONY: lint_md
-lint_md: vale markdownfmt
+lint_md: vale markdownfmt proposals_toc_check
 
 .PHONY: lint_md_fix
-lint_md_fix: vale markdownfmt_fix
+lint_md_fix: vale markdownfmt_fix proposals_toc
 
 ###############
 # Linting: Go #
