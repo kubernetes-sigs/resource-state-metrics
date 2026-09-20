@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
+	dto "github.com/prometheus/client_model/go"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,8 +35,7 @@ import (
 type StoreType struct {
 	logger       klog.Logger
 	mutex        sync.RWMutex
-	metrics      map[types.UID][]string
-	headers      []string
+	metrics      map[types.UID][]*dto.MetricFamily // one *dto.MetricFamily per family, per object UID
 	celCostLimit uint64
 	celTimeout   time.Duration
 
@@ -55,7 +55,6 @@ type StoreType struct {
 
 func newStore(
 	logger klog.Logger,
-	headers []string,
 	families []*FamilyType,
 	resolver v1alpha1.ResolverType,
 	labels []v1alpha1.Label,
@@ -64,8 +63,7 @@ func newStore(
 ) *StoreType {
 	return &StoreType{
 		logger:       logger,
-		metrics:      map[types.UID][]string{},
-		headers:      headers,
+		metrics:      map[types.UID][]*dto.MetricFamily{},
 		Families:     families,
 		Resolver:     resolver,
 		Labels:       labels,
@@ -193,13 +191,13 @@ func convertToUnstructured(obj interface{}) (*unstructured.Unstructured, error) 
 
 // metricsWithCardinality holds the generated metrics and their cardinality counts.
 type metricsWithCardinality struct {
-	metrics   []string
+	metrics   []*dto.MetricFamily
 	perFamily map[string]int64
 }
 
 func (s *StoreType) generateMetricsForObject(obj *unstructured.Unstructured) metricsWithCardinality {
 	result := metricsWithCardinality{
-		metrics:   make([]string, len(s.Families)),
+		metrics:   make([]*dto.MetricFamily, len(s.Families)),
 		perFamily: make(map[string]int64),
 	}
 
@@ -207,11 +205,11 @@ func (s *StoreType) generateMetricsForObject(obj *unstructured.Unstructured) met
 		inheritFamilyConfiguration(family, s)
 
 		family.logger = s.logger
-		metricStr, sampleCount := family.buildMetricString(obj)
-		result.metrics[i] = metricStr
+		mf, sampleCount := family.buildMetricFamily(obj)
+		result.metrics[i] = mf
 		result.perFamily[family.Name] = sampleCount
 
-		s.logger.V(4).Info("Add", "family", family.Name, "metrics", metricStr, "sampleCount", sampleCount)
+		s.logger.V(4).Info("Add", "family", family.Name, "sampleCount", sampleCount)
 	}
 
 	return result
