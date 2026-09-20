@@ -17,13 +17,17 @@ limitations under the License.
 package internal
 
 import (
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -132,50 +136,100 @@ func (s *selfServer) build(ctx context.Context, client kubernetes.Interface, gat
 	}
 }
 
+func parseQuality(params []string) float64 {
+	for _, param := range params {
+		param = strings.TrimSpace(param)
+		if strings.HasPrefix(strings.ToLower(param), "q=") {
+			if q, err := strconv.ParseFloat(strings.TrimSpace(param[2:]), 64); err == nil {
+				return q
+			}
+		}
+	}
+
+	return 1.0
+}
+
+func acceptsGzip(header http.Header) bool {
+	gzipQuality := -1.0
+	starQuality := -1.0
+
+	for _, v := range header.Values("Accept-Encoding") {
+		for _, clause := range strings.Split(v, ",") {
+			clause = strings.TrimSpace(clause)
+			if clause == "" {
+				continue
+			}
+
+			parts := strings.Split(clause, ";")
+			encoding := strings.ToLower(strings.TrimSpace(parts[0]))
+			q := parseQuality(parts[1:])
+
+			switch encoding {
+			case "gzip":
+				gzipQuality = q
+			case "*":
+				starQuality = q
+			}
+		}
+	}
+
+	if gzipQuality >= 0 {
+		return gzipQuality > 0
+	}
+
+	return starQuality > 0
+}
+
+func createMetricsHandler(server *mainServer, logger klog.Logger, binarySemaphore *sync.RWMutex, generator func(w io.Writer)) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		binarySemaphore.RLock()
+		defer binarySemaphore.RUnlock()
+
+		writer.Header().Set("Vary", "Accept-Encoding")
+
+		contentType := expfmt.NegotiateIncludingOpenMetrics(request.Header)
+		if contentType.FormatType() != expfmt.TypeOpenMetrics {
+			contentType = expfmt.NewFormat(expfmt.TypeTextPlain)
+		}
+
+		writer.Header().Set("Content-Type", string(contentType))
+
+		var out io.Writer = writer
+
+		if acceptsGzip(request.Header) {
+			writer.Header().Set("Content-Encoding", "gzip")
+
+			gz := gzip.NewWriter(writer)
+
+			defer func() {
+				if err := gz.Close(); err != nil {
+					logger.Error(err, "error closing gzip writer", "source", server.source)
+				}
+			}()
+
+			out = gz
+		}
+
+		// Generate metrics.
+		generator(out)
+
+		// Write the OpenMetrics EOF trailer if the negotiated content type is OpenMetrics
+		if contentType.FormatType() == expfmt.TypeOpenMetrics {
+			if _, err := expfmt.FinalizeOpenMetrics(out); err != nil {
+				logger.Error(err, "error writing OpenMetrics EOF trailer", "source", server.source)
+			}
+		}
+	}
+}
+
 // Build sets up the mainServer with the given gatherer.
 func (s *mainServer) build(ctx context.Context, client kubernetes.Interface, _ prometheus.Gatherer) *http.Server {
 	logger := klog.FromContext(ctx)
 	mux := http.NewServeMux()
 
-	// Handle the metrics path.
 	var binarySemaphore sync.RWMutex
 
-	metricsHandler := func(generator func(w http.ResponseWriter)) http.HandlerFunc {
-		return func(writer http.ResponseWriter, request *http.Request) {
-			binarySemaphore.RLock()
-			defer binarySemaphore.RUnlock()
-
-			// * The focus here is textual-only, in-line with a gauge-only philosophy.
-			// * Prometheus may support `info`, `stateset`, `gaugehistogram`, etc.
-			// OpenMetrics types in the future, but the focus here will remain the
-			// same, i.e., we'll only ever push `gauge` metrics, and show the same in
-			// their metadata.
-			// * NOTE By opting-into OpenMetrics below, we are contractually
-			// obligated to support expfmt.MetricFamilyToOpenMetrics conventions at
-			// all times, for the parts that impact us (`gauge` metrics, in our
-			// case).
-			// Refer: https://pkg.go.dev/github.com/prometheus/common@v0.67.5/expfmt#MetricFamilyToOpenMetrics
-			// * Negotiation can set content type to Protobuf as well, but we will
-			// ignore that, and always respond with an OpenMetrics text format.
-			contentType := expfmt.NegotiateIncludingOpenMetrics(request.Header)
-			if contentType.FormatType() != expfmt.TypeOpenMetrics {
-				contentType = expfmt.NewFormat(expfmt.TypeTextPlain)
-			}
-
-			writer.Header().Set("Content-Type", string(contentType))
-
-			// Generate metrics.
-			generator(writer)
-
-			// Write the OpenMetrics EOF trailer if the negotiated content type is OpenMetrics
-			if contentType.FormatType() == expfmt.TypeOpenMetrics {
-				if _, err := expfmt.FinalizeOpenMetrics(writer); err != nil {
-					logger.Error(err, "error writing OpenMetrics EOF trailer", "source", s.source)
-				}
-			}
-		}
-	}
-	mux.Handle("/metrics", promhttp.InstrumentHandlerDuration(s.requestsDurationVec, metricsHandler(func(w http.ResponseWriter) {
+	hMetrics := createMetricsHandler(s, logger, &binarySemaphore, func(w io.Writer) {
 		s.stores.Range(func(_, value any) bool {
 			stores, ok := value.([]*StoreType)
 			if !ok {
@@ -191,14 +245,27 @@ func (s *mainServer) build(ctx context.Context, client kubernetes.Interface, _ p
 
 			return true
 		})
-	})))
+	})
+
+	if s.requestsDurationVec != nil {
+		hMetrics = promhttp.InstrumentHandlerDuration(s.requestsDurationVec, hMetrics)
+	}
+
+	mux.Handle("/metrics", hMetrics)
 
 	// Handle the external path.
 	externalCollectors := external.GetCollectors().SetKubeConfig(s.kubeconfig)
 	externalCollectors.Build(ctx)
-	mux.Handle("/external", promhttp.InstrumentHandlerDuration(s.requestsDurationVec, metricsHandler(func(w http.ResponseWriter) {
+
+	hExternal := createMetricsHandler(s, logger, &binarySemaphore, func(w io.Writer) {
 		externalCollectors.Write(w)
-	})))
+	})
+
+	if s.requestsDurationVec != nil {
+		hExternal = promhttp.InstrumentHandlerDuration(s.requestsDurationVec, hExternal)
+	}
+
+	mux.Handle("/external", hExternal)
 
 	// Handle the healthz path.
 	healthzProber := newHealthz(s.source)
