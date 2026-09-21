@@ -225,7 +225,7 @@ func (f *Framework) Start(ctx context.Context, workers int) error {
 
 // GetGoldenRuleFiles returns all golden rule file paths for the specified resolver types.
 func GetGoldenRuleFiles(resolverType []v1alpha1.ResolverType) []string {
-	var files []string //nolint:prealloc
+	files := make([]string, 0, len(resolverType))
 
 	for _, resolverType := range resolverType {
 		goldenDir := filepath.Join("golden", string(resolverType))

@@ -1,0 +1,81 @@
+---
+# Copyright 2026 The Kubernetes resource-state-metrics Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+name: resourcemetricsmonitor-cardinality-multi-store
+description: >
+  Test that per-store cardinality is tracked correctly when an RMM spans
+  multiple stores. Before the fix, resource_state_metrics_family_cardinality
+  emitted with store="" (empty label), silently merging all stores into one
+  sample and losing per-store attribution. After the fix each store emits its
+  own labelled sample with the correct count.
+  This file exercises the setup: two stores (Bar and Foo) watched by a single
+  RMM, each contributing independent cardinality that must remain distinct.
+in:
+  apiVersion: resource-state-metrics.instrumentation.k8s-sigs.io/v1alpha1
+  kind: ResourceMetricsMonitor
+  metadata:
+    name: resourcemetricsmonitor-cardinality-multi-store
+    namespace: default
+  spec:
+    configuration:
+      stores:
+        - group: "samplecontroller.k8s.io"
+          version: "v1beta1"
+          kind: "Bar"
+          resource: "bars"
+          resolver: unstructured
+          families:
+            - name: "multi_store_bar_info"
+              help: "Bar resource info for multi-store cardinality test"
+              metrics:
+                - labels: []
+                  value: "1"
+        - group: "samplecontroller.k8s.io"
+          version: "v1alpha1"
+          kind: "Foo"
+          resource: "foos"
+          resolver: unstructured
+          families:
+            - name: "multi_store_foo_info"
+              help: "Foo resource info for multi-store cardinality test"
+              metrics:
+                - labels: []
+                  value: "1"
+metrics:
+  - '# HELP kube_customresource_multi_store_bar_info Bar resource info for multi-store cardinality test'
+  - '# TYPE kube_customresource_multi_store_bar_info gauge'
+  - 'kube_customresource_multi_store_bar_info{group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample",namespace="default"} 1.000000'
+  - 'kube_customresource_multi_store_bar_info{group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample-secondary",namespace="default"} 1.000000'
+  - '# HELP kube_customresource_multi_store_foo_info Foo resource info for multi-store cardinality test'
+  - '# TYPE kube_customresource_multi_store_foo_info gauge'
+  - 'kube_customresource_multi_store_foo_info{group="samplecontroller.k8s.io",version="v1alpha1",kind="Foo",name="test-sample",namespace="default"} 1.000000'
+status:
+  cardinality:
+    total: 3
+    thresholdsExceeded: false
+    perFamily:
+      samplecontroller.k8s.io/v1beta1/Bar:
+        multi_store_bar_info: 2
+      samplecontroller.k8s.io/v1alpha1/Foo:
+        multi_store_foo_info: 1
+  conditions:
+    - type: Processed
+      status: "True"
+      reason: EventHandlerSucceeded
+    - type: CardinalityCutoff
+      status: "False"
+      reason: CardinalityOK
+    - type: CardinalityWarning
+      status: "False"
+      reason: CardinalityOK
