@@ -40,6 +40,13 @@ const (
 	readHeaderTimeout = 5 * time.Second
 )
 
+// negotiableFormats lists the exposition formats served on metrics endpoints, in order of preference.
+var negotiableFormats = []expfmt.Format{
+	expfmt.NewFormat(expfmt.TypeOpenMetrics),
+	expfmt.Format(expfmt.OpenMetricsType + "; version=" + expfmt.OpenMetricsVersion_0_0_1 + "; charset=utf-8"),
+	expfmt.NewFormat(expfmt.TypeTextPlain),
+}
+
 // server defines behaviours for a Prometheus-based exposition server.
 type server interface {
 	// Build sets up the server with the given gatherer.
@@ -155,12 +162,9 @@ func (s *mainServer) build(ctx context.Context, client kubernetes.Interface, _ p
 			// all times, for the parts that impact us (`gauge` metrics, in our
 			// case).
 			// Refer: https://pkg.go.dev/github.com/prometheus/common@v0.67.5/expfmt#MetricFamilyToOpenMetrics
-			// * Negotiation can set content type to Protobuf as well, but we will
-			// ignore that, and always respond with an OpenMetrics text format.
-			contentType := expfmt.NegotiateIncludingOpenMetrics(request.Header)
-			if contentType.FormatType() != expfmt.TypeOpenMetrics {
-				contentType = expfmt.NewFormat(expfmt.TypeTextPlain)
-			}
+			// * Only text-based formats are offered during negotiation, i.e.,
+			// OpenMetrics (preferred) or the Prometheus text format as fallback.
+			contentType := expfmt.NegotiateAccept(request.Header, negotiableFormats...)
 
 			writer.Header().Set("Content-Type", string(contentType))
 
