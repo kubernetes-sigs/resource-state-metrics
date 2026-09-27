@@ -17,141 +17,84 @@ package internal
 
 import (
 	"bytes"
-	"strings"
 	"testing"
 
-	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
-	dto "github.com/prometheus/client_model/go"
-	"github.com/prometheus/common/expfmt"
+	"github.com/google/go-cmp/cmp"
 	"k8s.io/apimachinery/pkg/types"
 )
-
-func strPtr(s string) *string { return &s }
-
-func float64Ptr(f float64) *float64 { return &f }
 
 func TestMetricsWriter_writeAllTo(t *testing.T) {
 	t.Parallel()
 
-	gaugeType := dto.MetricType_GAUGE
-
 	tests := []struct {
-		name            string
-		m               metricsWriter
-		expectedEmpty   bool
-		expectedContain string
+		name     string
+		m        metricsWriter
+		expected string
 	}{
 		{
-			name:          "empty writer (no stores)",
-			m:             metricsWriter{contentType: expfmt.NewFormat(expfmt.TypeTextPlain)},
-			expectedEmpty: true,
+			name:     "empty store",
+			m:        metricsWriter{},
+			expected: "",
 		},
 		{
-			name: "store with no families produces no output",
+			name: "non-empty store with same number of headers and metrics",
 			m: metricsWriter{
-				contentType: expfmt.NewFormat(expfmt.TypeTextPlain),
 				stores: []*StoreType{
 					{
-						Families: []*FamilyType{},
-						metrics:  map[types.UID][]*dto.MetricFamily{},
-					},
-				},
-			},
-			expectedEmpty: true,
-		},
-		{
-			name: "store with families but no metrics produces no output",
-			m: metricsWriter{
-				contentType: expfmt.NewFormat(expfmt.TypeTextPlain),
-				stores: []*StoreType{
-					{
-						Families: []*FamilyType{
-							{Family: v1alpha1.Family{Name: "test_metric", Help: "A test metric"}},
-						},
-						metrics: map[types.UID][]*dto.MetricFamily{
-							"uid1": {nil},
+						headers: []string{"header1", "header2"},
+						metrics: map[types.UID][]string{
+							"uid1": {"metric1", "metric2"},
+							"uid2": {"metric1", "metric2"},
 						},
 					},
 				},
 			},
-			expectedEmpty: true,
+			expected: "header1\nmetric1metric1header2\nmetric2metric2",
 		},
 		{
-			name: "single family with one object produces output",
+			name: "non-empty store with more number of headers than metrics",
 			m: metricsWriter{
-				contentType: expfmt.NewFormat(expfmt.TypeTextPlain),
 				stores: []*StoreType{
 					{
-						Families: []*FamilyType{
-							{Family: v1alpha1.Family{Name: "test_metric", Help: "A test metric"}},
-						},
-						metrics: map[types.UID][]*dto.MetricFamily{
-							"uid1": {
-								{
-									Name: strPtr("kube_customresource_test_metric"),
-									Help: strPtr("A test metric"),
-									Type: &gaugeType,
-									Metric: []*dto.Metric{
-										{
-											Gauge: &dto.Gauge{Value: float64Ptr(1)},
-											Label: []*dto.LabelPair{
-												{Name: strPtr("name"), Value: strPtr("obj1")},
-											},
-										},
-									},
-								},
-							},
+						headers: []string{"header1", "header2", "header3"},
+						metrics: map[types.UID][]string{
+							"uid1": {"metric1", "metric2"},
+							"uid2": {"metric1", "metric2", "metric3"},
 						},
 					},
 				},
 			},
-			expectedContain: "kube_customresource_test_metric",
+			expected: "header1\nmetric1metric1header2\nmetric2metric2header3\nmetric3",
 		},
 		{
-			name: "single family with two objects merges output",
+			name: "non-empty store with less number of headers than metrics",
 			m: metricsWriter{
-				contentType: expfmt.NewFormat(expfmt.TypeTextPlain),
 				stores: []*StoreType{
 					{
-						Families: []*FamilyType{
-							{Family: v1alpha1.Family{Name: "test_metric", Help: "A test metric"}},
-						},
-						metrics: map[types.UID][]*dto.MetricFamily{
-							"uid1": {
-								{
-									Name: strPtr("kube_customresource_test_metric"),
-									Help: strPtr("A test metric"),
-									Type: &gaugeType,
-									Metric: []*dto.Metric{
-										{
-											Gauge: &dto.Gauge{Value: float64Ptr(1)},
-											Label: []*dto.LabelPair{
-												{Name: strPtr("name"), Value: strPtr("obj1")},
-											},
-										},
-									},
-								},
-							},
-							"uid2": {
-								{
-									Name: strPtr("kube_customresource_test_metric"),
-									Help: strPtr("A test metric"),
-									Type: &gaugeType,
-									Metric: []*dto.Metric{
-										{
-											Gauge: &dto.Gauge{Value: float64Ptr(2)},
-											Label: []*dto.LabelPair{
-												{Name: strPtr("name"), Value: strPtr("obj2")},
-											},
-										},
-									},
-								},
-							},
+						headers: []string{"header1"},
+						metrics: map[types.UID][]string{
+							"uid1": {"metric1", "metric2"},
+							"uid2": {"metric1", "metric2"},
 						},
 					},
 				},
 			},
-			expectedContain: "kube_customresource_test_metric",
+			expected: "header1\nmetric1metric1",
+		},
+		{
+			name: "non-empty store with no headers",
+			m: metricsWriter{
+				stores: []*StoreType{
+					{
+						headers: []string{},
+						metrics: map[types.UID][]string{
+							"uid1": {"metric1", "metric1"},
+							"uid2": {"metric1"},
+						},
+					},
+				},
+			},
+			expected: "",
 		},
 	}
 
@@ -164,14 +107,8 @@ func TestMetricsWriter_writeAllTo(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			got := w.String()
-
-			if tt.expectedEmpty && got != "" {
-				t.Fatalf("expected empty output, got: %q", got)
-			}
-
-			if tt.expectedContain != "" && !strings.Contains(got, tt.expectedContain) {
-				t.Fatalf("expected output to contain %q, got: %q", tt.expectedContain, got)
+			if got := w.String(); got != tt.expected {
+				t.Fatalf("%s", cmp.Diff(got, tt.expected))
 			}
 		})
 	}
