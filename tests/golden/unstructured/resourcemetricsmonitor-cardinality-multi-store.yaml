@@ -65,10 +65,8 @@ status:
     total: 3
     thresholdsExceeded: false
     perFamily:
-      samplecontroller.k8s.io/v1beta1/Bar:
-        multi_store_bar_info: 2
-      samplecontroller.k8s.io/v1alpha1/Foo:
-        multi_store_foo_info: 1
+      multi_store_bar_info: 2
+      multi_store_foo_info: 1
   conditions:
     - type: Processed
       status: "True"

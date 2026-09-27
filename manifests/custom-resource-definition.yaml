@@ -323,12 +323,9 @@ spec:
                     type: string
                   perFamily:
                     additionalProperties:
-                      additionalProperties:
-                        format: int64
-                        type: integer
-                      type: object
-                    description: PerFamily maps store identifiers to a map of family
-                      names and their cardinality.
+                      format: int64
+                      type: integer
+                    description: PerFamily maps family names to their cardinality.
                     type: object
                   perStore:
                     additionalProperties:
