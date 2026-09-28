@@ -83,11 +83,11 @@ The existing `ResourceMetricsMonitor` behaviour should remain unchanged. Existin
 
 ## Motivation
 
-Line references below are against `main` at `3b06a2a` on 2026-09-22. `pkg/resolver` last changed on 2026-05-29 (`8398f54`), so nothing here is racing a change in flight.
+Line references below are against `main` at [`3b06a2a`](https://github.com/kubernetes-sigs/resource-state-metrics/commit/3b06a2a87142ce1cbc9a88115fc920c9bca3113a) on 2026-09-22, and every reference is a link to that commit. `pkg/resolver` last changed on 2026-05-29 (`8398f54`), so nothing here is racing a change in flight.
 
 ### The current interface is too small
 
-`resolver.go:25` currently defines:
+[`resolver.go:25`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/resolver.go#L25) currently defines:
 
 ```go
 Resolve(query string, unstructuredObjectMap map[string]interface{}) map[string]string
@@ -99,7 +99,7 @@ That means some fairly important behaviour is currently part of an implicit cont
 
 ### Starlark follows a different path
 
-`unstructured` and CEL implement `Resolver` (`unstructured.go:33`, `cel.go:53`).
+`unstructured` and CEL implement `Resolver` ([`unstructured.go:33`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/unstructured.go#L33), [`cel.go:53`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L53)).
 
 Starlark does not. It has:
 
@@ -107,19 +107,19 @@ Starlark does not. It has:
 func (sr *StarlarkResolver) Resolve(obj map[string]interface{}) ([]ResolvedFamily, error)
 ```
 
-in `starlark.go:89`, and there is no interface assertion. I confirmed that with a type assertion in a test.
+in [`starlark.go:89`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L89), and there is no interface assertion. I confirmed that with a type assertion in a test.
 
-The wrapper therefore has a separate Starlark path, `f.starlarkResolver.Resolve` at `family.go:230` against `resolverInstance.Resolve` at `family.go:299` and `family.go:334`. A new resolver author has to understand this distinction before deciding which pattern to follow.
+The wrapper therefore has a separate Starlark path, `f.starlarkResolver.Resolve` at [`family.go:230`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L230) against `resolverInstance.Resolve` at [`family.go:299`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L299) and [`family.go:334`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L334). A new resolver author has to understand this distinction before deciding which pattern to follow.
 
 ### Inputs are different
 
 The resolvers also expose different object bindings.
 
-`unstructured` treats the query as a path and splits it on `.` (`unstructured.go:45`).
+`unstructured` treats the query as a path and splits it on `.` ([`unstructured.go:45`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/unstructured.go#L45)).
 
-CEL exposes the object as `o` (`cel.go:317`).
+CEL exposes the object as `o` ([`cel.go:317`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L317)).
 
-Starlark exposes it as `obj` (`starlark.go:141`).
+Starlark exposes it as `obj` ([`starlark.go:141`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L141)).
 
 These differences are not currently represented in the resolver interface.
 
@@ -127,32 +127,32 @@ These differences are not currently represented in the resolver interface.
 
 The current interface returns `map[string]string`.
 
-For CEL, lists are represented using keys such as (`cel.go:411`):
+For CEL, lists are represented using keys such as ([`cel.go:411`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L411)):
 
 ```text
 fieldParent#0
 fieldParent#1
 ```
 
-The wrapper then parses those keys again using `listIndexRegex` (`family.go:57`). That regex is `.+#\d+` and it is unanchored, so a key like `foo#2bar` matches too even though it is not a list entry.
+The wrapper then parses those keys again using `listIndexRegex` ([`family.go:57`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L57)). That regex is `.+#\d+` and it is unanchored, so a key like `foo#2bar` matches too even though it is not a list entry.
 
-Expanded values also use a `"\x00"` sentinel key (`family.go:48`).
+Expanded values also use a `"\x00"` sentinel key ([`family.go:48`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L48)).
 
 This means the resolver produces a flattened representation and the wrapper has to reconstruct the structure later.
 
-`unstructured` does not support the same list and map behaviour. It returns `Sprintf("%v")` of whatever it found (`unstructured.go:60`), so a map comes out as Go syntax like `map[a:b]`. Starlark returns `ResolvedFamily` directly.
+`unstructured` does not support the same list and map behaviour. It returns `Sprintf("%v")` of whatever it found ([`unstructured.go:60`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/unstructured.go#L60)), so a map comes out as Go syntax like `map[a:b]`. Starlark returns `ResolvedFamily` directly.
 
 I think the resolver should return the type it actually resolved instead of encoding that type into a string map.
 
 ### Failures are not represented consistently
 
-`unstructured` returns the query itself when a field is missing or an error occurs (`unstructured.go:50`, `unstructured.go:57`).
+`unstructured` returns the query itself when a field is missing or an error occurs ([`unstructured.go:50`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/unstructured.go#L50), [`unstructured.go:57`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/unstructured.go#L57)).
 
-CEL follows a similar approach through `defaultMapping` (`cel.go:127`, `cel.go:142`, `cel.go:359`), including parse errors, evaluation errors, cost limit failures and timeouts.
+CEL follows a similar approach through `defaultMapping` ([`cel.go:127`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L127), [`cel.go:142`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L142), [`cel.go:359`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L359)), including parse errors, evaluation errors, cost limit failures and timeouts.
 
-Starlark returns a Go error (`starlark.go:121`).
+Starlark returns a Go error ([`starlark.go:121`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L121)).
 
-The self mapping also leaks into output. When a label expression names a field the object does not have, the wrapper takes the scalar branch because the query key is present (`family.go:338`), and the label is emitted with the expression text as its value, for example `absent="metadata.nothere"`. I confirmed this with a test against `resolveLabels`. For metric values the same self mapping fails to parse as a number at write time and the sample is skipped, which is what the resolver log messages mean by skipped at write time. Labels have no such check.
+The self mapping also leaks into output. When a label expression names a field the object does not have, the wrapper takes the scalar branch because the query key is present ([`family.go:338`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L338)), and the label is emitted with the expression text as its value, for example `absent="metadata.nothere"`. I confirmed this with a test against `resolveLabels`. For metric values the same self mapping fails to parse as a number at write time and the sample is skipped, which is what the resolver log messages mean by skipped at write time. Labels have no such check.
 
 This means the wrapper cannot reliably distinguish:
 
@@ -166,9 +166,9 @@ The new contract should make these cases explicit.
 
 ### Sanitization is also split
 
-`metricutil.SanitizeLabelKey` (`pkg/metricutil/metrics.go:62`) is used by CEL's `labelPrefix` (`cel.go:262`) and Starlark's `label_prefix` (`starlark.go:241`).
+`metricutil.SanitizeLabelKey` ([`pkg/metricutil/metrics.go:62`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/metricutil/metrics.go#L62)) is used by CEL's `labelPrefix` ([`cel.go:262`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L262)) and Starlark's `label_prefix` ([`starlark.go:241`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L241)).
 
-The wrapper has another sanitization path, `sanitizeKey` in `family.go:468`, using `strcase.ToSnake`. It is applied at `family.go:253`, `family.go:341`, `family.go:353`, `family.go:366` and `family.go:368`.
+The wrapper has another sanitization path, `sanitizeKey` in [`family.go:468`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L468), using `strcase.ToSnake`. It is applied at [`family.go:253`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L253), [`family.go:341`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L341), [`family.go:353`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L353), [`family.go:366`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L366) and [`family.go:368`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L368).
 
 For example, `envType` can remain `envType` through one path but become `env_type` through another. I confirmed this by running both functions in a test. A key can also pass through both.
 
@@ -176,13 +176,13 @@ This behaviour should have one defined rule instead of depending on which path p
 
 ### Timeouts are implemented differently
 
-CEL has a timeout and cost limit (`cel.go:115` to `cel.go:142`, `cel.go:311`).
+CEL has a timeout and cost limit ([`cel.go:115`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L115) to [`cel.go:142`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L142), [`cel.go:311`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L311)).
 
-Starlark has a timeout and step limit (`starlark.go:102`).
+Starlark has a timeout and step limit ([`starlark.go:102`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L102)).
 
-The implementations also differ in cancellation behaviour. CEL calls `program.Eval` without a context (`cel.go:317`), so when the timeout fires the goroutine can continue running until evaluation finishes or the cost limit is reached.
+The implementations also differ in cancellation behaviour. CEL calls `program.Eval` without a context ([`cel.go:317`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L317)), so when the timeout fires the goroutine can continue running until evaluation finishes or the cost limit is reached.
 
-Starlark cancels its thread when the timeout is reached (`starlark.go:119`).
+Starlark cancels its thread when the timeout is reached ([`starlark.go:119`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L119)).
 
 `unstructured` does not need the same kind of execution bound because it is walking an object.
 
@@ -192,15 +192,15 @@ There is an opportunity here to share the timeout and metrics handling while sti
 
 There are equivalent helpers implemented separately for CEL and Starlark.
 
-For example, CEL's `quantity` (`cel.go:238`) returns `0.0` for an empty string, while Starlark's `quantity_to_float` (`starlark.go:167`) returns an error.
+For example, CEL's `quantity` ([`cel.go:238`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L238)) returns `0.0` for an empty string, while Starlark's `quantity_to_float` ([`starlark.go:167`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L167)) returns an error.
 
-`labelPrefix` (`cel.go:262`) and `label_prefix` (`starlark.go:241`) also perform similar work under different names. CEL has `unixSeconds` and `now` (`cel.go:183`, `cel.go:204`), Starlark imports the whole Starlark time module (`starlark.go:133`).
+`labelPrefix` ([`cel.go:262`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L262)) and `label_prefix` ([`starlark.go:241`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L241)) also perform similar work under different names. CEL has `unixSeconds` and `now` ([`cel.go:183`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L183), [`cel.go:204`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L204)), Starlark imports the whole Starlark time module ([`starlark.go:133`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L133)).
 
 If both resolvers are expected to provide the same functionality, the expected behaviour should be written down and tested in one place.
 
 ### Metrics are inconsistent
 
-Currently only CEL records resolver evaluation metrics, through `cel_evaluations_total` (`internal/controller.go:195`, `cel.go:124`, `cel.go:131`, `cel.go:139`).
+Currently only CEL records resolver evaluation metrics, through `cel_evaluations_total` ([`internal/controller.go:195`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/controller.go#L195), [`cel.go:124`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L124), [`cel.go:131`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L131), [`cel.go:139`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L139)).
 
 Starlark and `unstructured` do not expose the same information.
 
@@ -208,7 +208,7 @@ The proposal is to make resolver evaluation metrics consistent rather than havin
 
 ### Possible existing bug
 
-While looking at the map handling, I found a possible issue in `resolveMapInner` (`cel.go:425`).
+While looking at the map handling, I found a possible issue in `resolveMapInner` ([`cel.go:425`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L425)).
 
 It accepts:
 
@@ -222,7 +222,7 @@ bool
 
 but not `int64` or `uint64`.
 
-`resolveListInner` (`cel.go:410`) does handle those integer types.
+`resolveListInner` ([`cel.go:410`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L410)) does handle those integer types.
 
 CEL can return `int64` and `uint64`, so integer values inside maps may currently be skipped.
 
@@ -260,11 +260,11 @@ The first two implementations would be `unstructured` and CEL for `ExpressionRes
 
 Instead of returning everything through `map[string]string`, the expression resolver would expose one `ResolveValue` method that returns a tagged value, a found flag and an error. The value says whether it is a scalar, a list or a map, and lists and maps can hold values of any of the three kinds.
 
-One method rather than one per kind because the wrapper cannot know the kind up front. `Metric.Value` and `Label.Value` are expression strings, and CEL only learns the result type after evaluating (`cel.go:347`). Calling a typed method per kind would mean evaluating the same expression more than once, which breaks `now()` and inflates the cost accounting.
+One method rather than one per kind because the wrapper cannot know the kind up front. `Metric.Value` and `Label.Value` are expression strings, and CEL only learns the result type after evaluating ([`cel.go:347`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L347)). Calling a typed method per kind would mean evaluating the same expression more than once, which breaks `now()` and inflates the cost accounting.
 
 The list index convention and expanded-value sentinel would no longer be needed.
 
-The wrapper would receive a list as a list and a map as a map, and it keeps doing the expansion. Nested lists and maps come back nested, so the flattening CEL does today (`cel.go:410` to `cel.go:434`) moves into the wrapper as a written down rule with a golden fixture, instead of disappearing. Whether that flattening should stay long term is an open question below.
+The wrapper would receive a list as a list and a map as a map, and it keeps doing the expansion. Nested lists and maps come back nested, so the flattening CEL does today ([`cel.go:410`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L410) to [`cel.go:434`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L434)) moves into the wrapper as a written down rule with a golden fixture, instead of disappearing. Whether that flattening should stay long term is an open question below.
 
 ### Explicit errors
 
@@ -288,7 +288,7 @@ For example:
 - `unstructured` does not need an execution timeout.
 - CEL can return lists and maps, so list and map expansion work with it. `unstructured` only returns scalars.
 
-That last one is the underscore expansion trait #15 asks for. Today expansion is a wrapper decision made after evaluation, a non scalar result plus a leading `_` on the label name means map expansion (`family.go:346`), and nothing tells the wrapper whether the resolver can produce a list or a map at all. The trait says which of the two a resolver can return. It cannot be checked at config load, since the result kind is only known after evaluation, so it is used in three places instead: the shared test table skips list and map cases for resolvers that declare neither, the docs for each resolver state it, and the wrapper logs a clear error if a resolver returns a kind it did not declare.
+That last one is the underscore expansion trait #15 asks for. Today expansion is a wrapper decision made after evaluation, a non scalar result plus a leading `_` on the label name means map expansion ([`family.go:346`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L346)), and nothing tells the wrapper whether the resolver can produce a list or a map at all. The trait says which of the two a resolver can return. It cannot be checked at config load, since the result kind is only known after evaluation, so it is used in three places instead: the shared test table skips list and map cases for resolvers that declare neither, the docs for each resolver state it, and the wrapper logs a clear error if a resolver returns a kind it did not declare.
 
 ### Shared timeout handling
 
@@ -304,7 +304,7 @@ The equivalent functions in CEL and Starlark should have documented behaviour, a
 
 - `quantity` in CEL and `quantity_to_float` in Starlark. Same job, different name, and they disagree on an empty string.
 - `labelPrefix` in CEL and `label_prefix` in Starlark. Same job, different name.
-- `unixSeconds` and `now` in CEL have no Starlark equivalent. Starlark gets the whole `time` module instead (`starlark.go:133`), with `time.now()`, `time.parse_time()` and friends, which is a different and larger surface.
+- `unixSeconds` and `now` in CEL have no Starlark equivalent. Starlark gets the whole `time` module instead ([`starlark.go:133`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L133)), with `time.now()`, `time.parse_time()` and friends, which is a different and larger surface.
 
 So the shared table covers the first two pairs from the start, with the edge cases written down, an empty quantity being the obvious one. For time, the proposal is to add `unix_seconds(s)` and `now()` built ins to Starlark that mirror the CEL functions, and keep the `time` module as it is, so the time rows can run against both. The names differ per DSL because each follows its own naming convention, the table maps them.
 
@@ -353,7 +353,7 @@ The old `Resolver` interface and the old `Resolve` methods stay for one release,
 <<[UNRESOLVED @rexagod @mrueg ]>>
 
 - Is making Starlark's contract official as `FamilyResolver` part of #15, or should #15 only cover expression resolvers and leave the family contract for a follow-up?
-- Nested lists and maps are flattened into the label map by CEL today (`cel.go:415`). The proposal keeps that behaviour, done by the wrapper on the nested value, so output does not change. Should it stay long term, or should nested composites be rejected with a clear error once existing configs have been checked for them?
+- Nested lists and maps are flattened into the label map by CEL today ([`cel.go:415`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L415)). The proposal keeps that behaviour, done by the wrapper on the nested value, so output does not change. Should it stay long term, or should nested composites be rejected with a clear error once existing configs have been checked for them?
 
 <<[/UNRESOLVED]>>
 
@@ -440,7 +440,7 @@ type FamilyResolver interface {
 The rules for the three return values, so the deprecated wrappers cannot change output by reading them differently:
 
 - `found` is `false` only when the query points at a field the object does not have. Then `Value` is the zero value and the caller ignores it, and `err` is `nil`. This is a deliberate change from today for labels, where a missing field is emitted with the expression text as its value. That is treated as a bug and the new behaviour is pinned by a golden fixture, see the test plan. It is the one place this proposal changes output on purpose.
-- A `null` value is `found = true` with `Kind = KindScalar` and `Scalar = "<nil>"`. That is what CEL emits today (`cel.go:354`) and changing it would alter existing output. Whether `null` should stay a value is a follow up, not part of this.
+- A `null` value is `found = true` with `Kind = KindScalar` and `Scalar = "<nil>"`. That is what CEL emits today ([`cel.go:354`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L354)) and changing it would alter existing output. Whether `null` should stay a value is a follow up, not part of this.
 - An empty list or an empty map is a successful result. `found` is `true`, `Kind` is `KindList` or `KindMap`, and `List` or `Map` is empty, not `nil`.
 - `err` is non `nil` only for a failure to evaluate. Then `found` is `false` and `Value` is the zero value.
 - The zero `Kind` is `KindInvalid`, so `Value{}` is never a valid result. An empty string scalar is `Kind = KindScalar` with `Scalar = ""`, which is distinguishable from the zero value. `Kind` is always one of the three real kinds when `found` is true.
@@ -507,7 +507,7 @@ The wrapper calls `ResolveValue` once and switches on `Value.Kind`. A scalar is 
 
 Two cases that exist today and keep their behaviour:
 
-- An empty list or empty map as a metric value means zero samples for that object, not an error, which is what `family.go:301` does now for an empty result. As a label it means the label is left off the series, as now.
+- An empty list or empty map as a metric value means zero samples for that object, not an error, which is what [`family.go:301`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L301) does now for an empty result. As a label it means the label is left off the series, as now.
 - A missing metric value, `found = false`, skips the sample and logs it at verbosity 1, which is what happens today when the self mapped query fails to parse as a number at write time. Only the log message changes, it can now say the field was missing instead of failing a float parse.
 
 Nested values are flattened by the wrapper the way CEL flattens them today, so existing output does not change. That flattening gets its own golden fixture so the behaviour is pinned before it moves.
@@ -524,16 +524,19 @@ and then being parsed again.
 
 ### Migration
 
-1. Land the CEL timeout cancellation fix as its own small PR, since it stands on its own.
-2. Add the new interfaces and the deprecated wrappers without changing behaviour.
-3. Move `unstructured` to the new interface.
-4. Move CEL to the new interface.
-5. Move Starlark to `FamilyResolver`.
-6. Move the wrapper to the typed results.
-7. Add the resolver evaluation counter, update the mixin alerts and regenerate the manifests, keep the old metric name as an alias for one release.
-8. One release later, remove the deprecated `Resolver` interface, the deprecated `Resolve` methods, and the metric alias.
+One PR per step, so each can be reviewed and merged on its own and nothing waits on a bigger change.
 
-The existing golden tests run at every stage. During migration, the old `Resolve` methods stay on the concrete types as deprecated wrappers around `ResolveValue`, so the old `Resolver` interface keeps working. This gives us a way to introduce the new contract without changing every caller in one PR.
+1. CEL timeout cancellation as its own fix, `ContextEval` plus `InterruptCheckFrequency`, with a test that a looping expression stops on cancel.
+2. The new interfaces, `Value`, `Traits` and `ExpressionTraits`, the error kinds, the shared timeout wrapper, and the deprecated `Resolve` wrappers, with no behaviour change.
+3. Move `unstructured` to `ResolveValue`, declaring its traits.
+4. Move CEL to `ResolveValue`, declaring its traits.
+5. Move Starlark to `ResolveFamilies`, declaring its traits, with the cancellation watcher that exits on return.
+6. Move the wrapper to the typed results, with the golden fixtures for lists, maps, nested values, null and the missing label field.
+7. The shared test table in `pkg/resolver`, covering the shared cases and the `quantity` and `labelPrefix` pairs, plus `unix_seconds` and `now` built ins for Starlark so the time rows run on both sides.
+8. The resolver evaluation counter, the mixin alerts updated and the manifests regenerated, the old metric name kept as an alias for one release.
+9. One release later, remove the deprecated `Resolver` interface, the deprecated `Resolve` methods, and the metric alias.
+
+The existing golden tests run at every step. During migration, the old `Resolve` methods stay on the concrete types as deprecated wrappers around `ResolveValue`, so the old `Resolver` interface keeps working. This gives us a way to introduce the new contract without changing every caller in one PR.
 
 ### Test Plan
 
@@ -578,16 +581,22 @@ Add at least one `ResourceMetricsMonitor` example for each resolver that exercis
 
 ### Graduation Criteria
 
-The proposal is ready for implementation once the maintainers agree on the two contracts and the open questions have been resolved.
+The proposal moves from provisional to implementable once the maintainers agree on the two contracts and the open questions have answers.
 
-The implementation is complete when:
+It is implemented when every deliverable below has landed. Each line maps to one problem in Motivation, so nothing raised there is left without an owner.
 
-- all three existing resolvers use the new contracts
-- the shared resolver tests run in CI
-- the wrapper no longer depends on encoded list keys
-- resolver failures are distinguishable
-- the existing golden fixtures pass unchanged
-- the deprecated `Resolver` interface and the deprecated `Resolve` methods have been removed after the agreed migration period
+- Contract. `ExpressionResolver` and `FamilyResolver` exist, all three resolvers implement them, and `internal/family.go` calls only the new methods.
+- Starlark. `StarlarkResolver` implements `FamilyResolver` and the wrapper has no Starlark specific struct field or code path.
+- Inputs and traits. Every resolver returns `Traits` with `ObjectBinding`, `Sanitization` and `Bounds` filled in, expression resolvers return `ExpressionTraits` with `Lists` and `Maps`, and the wrapper logs an error when a resolver returns a kind it did not declare.
+- Typed results. `ResolveValue` returns a `Value`, the wrapper switches on `Kind`, and `listIndexRegex`, `expandedValueSentinel` and `collectIndexedResolvedValues` are gone.
+- Failures. `ErrInvalidExpression` and `ErrBudgetExceeded` exist, the `found` rules hold for every resolver, and a caller cancellation is returned as the context error and not counted.
+- Cancellation. Every resolve method takes a context, the shared timeout wrapper cancels it, CEL evaluates with `ContextEval` and `InterruptCheckFrequency`, the Starlark watcher exits when the script returns, and a timeout test exists per resolver.
+- Sanitization. `Traits.Sanitization` records which helper each resolver applies, both current paths are pinned by golden fixtures, and merging them into one rule is tracked as a follow up issue.
+- Helper functions. The shared test table covers `quantity` and `labelPrefix` on both DSLs with the edge cases written down, and Starlark has `unix_seconds` and `now` so the time rows run on both.
+- Metrics. `resolver_evaluations_total` with a `resolver` label replaces `cel_evaluations_total`, the mixin alerts query it, the manifests are regenerated, and the alias is removed one release later.
+- Output. The existing golden fixtures pass unchanged, and the new fixtures for lists, maps, nested values, null and the missing label field are in.
+- Tests. The shared test table runs in CI and is the documented way in for a fourth resolver.
+- Compatibility. The deprecated `Resolver` interface and `Resolve` methods stayed for one release and have been removed.
 
 ### Observability & operational impact
 
@@ -595,7 +604,7 @@ Resolver evaluation metrics should become consistent across resolvers.
 
 The current `cel_evaluations_total` has `namespace`, `name`, `family` and `result` labels. It becomes a general resolver evaluation counter, `resolver_evaluations_total`, with a `resolver` label added, one value per resolver, and `result` keeping its current values, `success`, `error` and `timeout`.
 
-Two alerts in the mixin query the old name, `ResourceStateMetricsCELEvaluationErrors` and `ResourceStateMetricsCELEvaluationTimeouts`. The source is `jsonnet/resource-state-metrics-mixin/alerts.libsonnet:40` to `alerts.libsonnet:60` and the generated copy is `jsonnet/manifests/alerts.yaml:31` to `alerts.yaml:52`. Renaming the metric without touching them would switch those alerts off silently. So the PR that adds the new counter also updates the libsonnet to query it with `resolver="cel"`, regenerates the manifests with `make generate`, and keeps the old metric name emitting for one release as an alias so dashboards outside this repo have time to move. The alias goes in the release after.
+Two alerts in the mixin query the old name, `ResourceStateMetricsCELEvaluationErrors` and `ResourceStateMetricsCELEvaluationTimeouts`. The source is [`jsonnet/resource-state-metrics-mixin/alerts.libsonnet:40`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/jsonnet/resource-state-metrics-mixin/alerts.libsonnet#L40) to [`alerts.libsonnet:60`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/jsonnet/resource-state-metrics-mixin/alerts.libsonnet#L60) and the generated copy is [`jsonnet/manifests/alerts.yaml:31`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/jsonnet/manifests/alerts.yaml#L31) to [`alerts.yaml:52`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/jsonnet/manifests/alerts.yaml#L52). Renaming the metric without touching them would switch those alerts off silently. So the PR that adds the new counter also updates the libsonnet to query it with `resolver="cel"`, regenerates the manifests with `make generate`, and keeps the old metric name emitting for one release as an alias so dashboards outside this repo have time to move. The alias goes in the release after.
 
 This adds a small amount of cardinality to an internal metric and gives operators a consistent way to see resolver failures.
 
