@@ -1,11 +1,15 @@
-# BUILDPLATFORM/TARGETOS/TARGETARCH are populated automatically by BuildKit.
-# Declare defaults so plain `docker build` (BuildKit disabled, no buildx) does
-# not expand them empty and feed `--platform=` / `GOOS= GOARCH=` downstream.
-ARG BUILDPLATFORM=linux/amd64
-FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
+# check=skip=RedundantTargetPlatform
 
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+# BUILDPLATFORM/TARGETPLATFORM/TARGETOS/TARGETARCH are populated automatically
+# by BuildKit. Don't give the ARGs defaults: a default takes precedence over the
+# value BuildKit provides. The fallbacks where they are used only apply when
+# they are empty, e.g. with the legacy builder (BuildKit disabled), which then
+# builds linux/amd64 for both the binary and the base image.
+ARG BUILDPLATFORM
+FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.25 AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /
 
@@ -15,9 +19,9 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH make resource-state-metrics
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} make resource-state-metrics
 
-FROM gcr.io/distroless/static-debian12:latest@sha256:932f28cabd51c9f9e1e25d3b9d1f09119036722ce86f5c5bd723c4f51cc2d6dc
+FROM --platform=${TARGETPLATFORM:-linux/amd64} gcr.io/distroless/static-debian12:latest@sha256:d75cdd72874d4790092fcb1b058493ecf6bb5bf2b2b897045b00ff01d91843f2
 
 COPY --from=builder /resource-state-metrics /
 
