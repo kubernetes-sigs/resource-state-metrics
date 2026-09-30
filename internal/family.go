@@ -685,11 +685,21 @@ func (f *FamilyType) kind() MetricKind {
 
 func (f *FamilyType) buildHeaders() string {
 	header := strings.Builder{}
-	header.WriteString("# HELP " + kubeCustomResourcePrefix + f.Name + " " + f.Help)
+	header.WriteString("# HELP " + kubeCustomResourcePrefix + f.Name + " " + escapeHelp(f.Help))
 	header.WriteString("\n")
 	header.WriteString("# TYPE " + kubeCustomResourcePrefix + f.Name + " " + string(f.kind()))
 
 	return header.String()
+}
+
+// helpEscaper escapes a HELP string per the Prometheus text exposition format:
+// backslashes become "\\" and newlines become "\n". A single-pass replacer performs
+// non-overlapping replacements, so escaping order is not a concern.
+var helpEscaper = strings.NewReplacer("\\", `\\`, "\n", `\n`)
+
+// escapeHelp escapes a HELP string per the Prometheus text exposition format.
+func escapeHelp(s string) string {
+	return helpEscaper.Replace(s)
 }
 
 // buildPeripheralHeader returns headers for peripheral metrics like _created, if applicable.
