@@ -83,8 +83,8 @@ jobs:
       - name: Setup dependencies
         run: make setup
       - name: Run e2e tests (iteration ${{ matrix.iteration }})
-        run: make test_e2e
-  compare-metrics:
+        run: make test_e2e_fake
+  test-e2e-envtest:
     needs: setup
     runs-on: ubuntu-latest
     strategy:
@@ -101,24 +101,5 @@ jobs:
           go-version-file: go.mod
       - name: Setup dependencies
         run: make setup
-      - name: Create kind cluster
-        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
-        with:
-          cluster_name: kind
-      - name: Start controller
-        env:
-          KUBECONFIG: /home/runner/.kube/config
-        run: |
-          kind export kubeconfig
-          nohup bash -c 'V=10 CREATED_AT_EPOCH=0 make local' &>/tmp/controller.log &
-      - name: Wait for the build to complete
-        run: sleep 60
-      - name: Apply testdata
-        run: make apply_testdata
-      - name: Wait for metrics
-        run: sleep 10
-      - name: Compare metrics (iteration ${{ matrix.iteration }})
-        run: make compare_metrics
-      - name: Print controller logs
-        if: always()
-        run: cat /tmp/controller.log || echo "(no controller logs found)"
+      - name: Run envtest e2e tests (iteration ${{ matrix.iteration }})
+        run: make test_e2e_envtest

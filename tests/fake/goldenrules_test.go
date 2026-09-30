@@ -31,7 +31,7 @@ to them simply making more sense generally, and will be documented in their
 respective golden configuration files.
 */
 
-package tests
+package fake
 
 import (
 	"context"
@@ -46,8 +46,9 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/kubernetes-sigs/resource-state-metrics/internal"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
-	"github.com/kubernetes-sigs/resource-state-metrics/tests/framework"
-	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/kubernetes-sigs/resource-state-metrics/tests/fake/framework"
+	"github.com/kubernetes-sigs/resource-state-metrics/tests/testutil"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -130,8 +131,8 @@ func getCRDandNonCRDManifests(t *testing.T) ([]string, []string, error) {
 	t.Helper()
 
 	manifestDirs := []string{
-		"manifests",
 		"../manifests",
+		"../../manifests",
 	}
 
 	// Fake client does not support certain resources OOTB.
@@ -225,7 +226,7 @@ func applyCRManifests(ctx context.Context, t *testing.T, f *framework.Framework)
 func testResolver(ctx context.Context, t *testing.T, f *framework.Framework, resolverType v1alpha1.ResolverType) {
 	t.Helper()
 
-	files := framework.GetGoldenRuleFiles([]v1alpha1.ResolverType{resolverType})
+	files := testutil.GetGoldenRuleFiles("../golden", []v1alpha1.ResolverType{resolverType})
 
 	if len(files) == 0 {
 		t.Fatalf("No golden rule files found")
@@ -234,7 +235,7 @@ func testResolver(ctx context.Context, t *testing.T, f *framework.Framework, res
 	}
 
 	for _, file := range files {
-		goldenRules, err := framework.GoldenRulesFromYAML(ctx, file)
+		goldenRules, err := testutil.GoldenRulesFromYAML(ctx, file)
 		if err != nil {
 			t.Fatalf("Failed to load golden rules from %s: %v", file, err)
 		}
@@ -248,7 +249,7 @@ func testResolver(ctx context.Context, t *testing.T, f *framework.Framework, res
 }
 
 // testGoldenRule tests a single golden rule.
-func testGoldenRule(ctx context.Context, t *testing.T, f *framework.Framework, goldenRule *framework.GoldenRule) {
+func testGoldenRule(ctx context.Context, t *testing.T, f *framework.Framework, goldenRule *testutil.GoldenRule) {
 	t.Helper()
 
 	if goldenRule.In == nil {
@@ -258,7 +259,7 @@ func testGoldenRule(ctx context.Context, t *testing.T, f *framework.Framework, g
 	}
 
 	// RMMs are pre-loaded when creating the framework, so only apply non-RMM resources
-	if goldenRule.In != nil && goldenRule.In.GetKind() != framework.ResourceMetricsMonitorKind {
+	if goldenRule.In != nil && goldenRule.In.GetKind() != testutil.ResourceMetricsMonitorKind {
 		_, err := f.ApplyCRUnstructured(ctx, goldenRule.In)
 		if err != nil {
 			t.Fatalf("Failed to apply input resource: %v", err)
@@ -284,7 +285,7 @@ func testGoldenRule(ctx context.Context, t *testing.T, f *framework.Framework, g
 // validateStatusOutput validates the RMM status after reconciliation using cmp.Diff.
 // It polls until the expected status matches because the cardinality status is
 // updated asynchronously by a background goroutine after the Processed condition is set.
-func validateStatusOutput(ctx context.Context, t *testing.T, f *framework.Framework, goldenRule *framework.GoldenRule) {
+func validateStatusOutput(ctx context.Context, t *testing.T, f *framework.Framework, goldenRule *testutil.GoldenRule) {
 	t.Helper()
 
 	opts := cmp.Options{
@@ -343,7 +344,7 @@ func validateMetricsOutput(t *testing.T, f *framework.Framework, expectedMetricL
 		}
 	}
 
-	if err := testutil.ScrapeAndCompare(url, strings.NewReader(expectedMetrics), familyNames...); err != nil {
+	if err := promtestutil.ScrapeAndCompare(url, strings.NewReader(expectedMetrics), familyNames...); err != nil {
 		t.Errorf("Metric comparison failed: %v", err)
 	}
 }
