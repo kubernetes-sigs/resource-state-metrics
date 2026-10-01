@@ -77,10 +77,16 @@ var (
 
 // ResourceMetricsMonitor is a specification for a ResourceMetricsMonitor resource.
 type ResourceMetricsMonitor struct {
-	metav1.TypeMeta   `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
+	// metadata is the standard object metadata.
+	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Spec              ResourceMetricsMonitorSpec   `json:"spec"`
-	Status            ResourceMetricsMonitorStatus `json:"status,omitempty"`
+	// spec defines the desired state of ResourceMetricsMonitor.
+	// +required
+	Spec ResourceMetricsMonitorSpec `json:"spec"`
+	// status defines the observed state of ResourceMetricsMonitor.
+	// +optional
+	Status ResourceMetricsMonitorStatus `json:"status,omitempty"`
 }
 
 // ResolverType represents the type of resolver to use for label/value expressions.
@@ -100,21 +106,22 @@ const (
 
 // Label directly associates a label name with its value expression.
 type Label struct {
-	// Name is the label name.
-	// +kubebuilder:validation:Required
+	// name is the label name.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
+	// +required
 	Name string `json:"name"`
 
-	// Value is the expression to evaluate for this label's value.
-	// +kubebuilder:validation:Required
+	// value is the expression to evaluate for this label's value.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	// +required
 	Value string `json:"value"`
 }
 
 // StarlarkConfig configures Starlark script execution for metric generation.
 type StarlarkConfig struct {
-	// Script is the inline Starlark script source code.
+	// script is the inline Starlark script source code.
 	// The script has access to `obj` (the resource as a dict) and built-in functions:
 	// - quantity_to_float(s): Parse Kubernetes Quantity ("100m", "1Gi") to float
 	// - time: starlark-go's time module (https://pkg.go.dev/go.starlark.net/lib/time).
@@ -128,85 +135,103 @@ type StarlarkConfig struct {
 	// - label_prefix(prefix, labels): Prefix and sanitize a label dict's keys
 	// - metric(labels, value): Create a sample with labels dict and float value
 	// - family(name, help, kind, samples): Create a family with list of samples
-	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=65536
+	// +required
 	Script string `json:"script"`
 
-	// Timeout is the maximum execution time in seconds (default: 5, max: 60).
+	// timeout is the maximum execution time in seconds (default: 5, max: 60).
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=60
-	Timeout int `json:"timeout,omitempty"`
+	Timeout int32 `json:"timeout,omitempty"`
 
-	// MaxSteps limits the number of Starlark execution steps (default: 100000).
+	// maxSteps limits the number of Starlark execution steps (default: 100000).
 	// This prevents infinite loops and runaway scripts.
 	// +optional
 	// +kubebuilder:validation:Minimum=1000
-	MaxSteps int `json:"maxSteps,omitempty"`
+	MaxSteps int32 `json:"maxSteps,omitempty"`
 }
 
 // Metric represents a single time series within a family.
 type Metric struct {
-	// Labels defines the label set for this metric.
+	// labels defines the label set for this metric.
 	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MinItems=0
+	// +kubebuilder:validation:MaxItems=64
 	Labels []Label `json:"labels,omitempty"`
 
-	// Value is the expression to evaluate for the metric value.
-	// +kubebuilder:validation:Required
+	// value is the expression to evaluate for the metric value.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	// +required
 	Value string `json:"value"`
 
-	// Resolver overrides the family/store resolver for this metric.
+	// resolver overrides the family/store resolver for this metric.
 	// +optional
 	Resolver ResolverType `json:"resolver,omitempty"`
 }
 
 // Family represents a metric family (a group of metrics with the same name).
 type Family struct {
-	// Name is the metric family name (will be prefixed with kube_customresource_).
-	// +kubebuilder:validation:Required
+	// name is the metric family name (will be prefixed with kube_customresource_).
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Pattern=`^[a-zA-Z_][a-zA-Z0-9_]*$`
+	// +required
 	Name string `json:"name"`
 
-	// Help is the help text for this metric family.
-	// +kubebuilder:validation:Required
+	// help is the help text for this metric family.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	// +required
 	Help string `json:"help"`
 
-	// Metrics defines the individual metrics within this family.
+	// metrics defines the individual metrics within this family.
 	// When Starlark is set, this field is ignored.
 	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MinItems=0
+	// +kubebuilder:validation:MaxItems=128
 	Metrics []Metric `json:"metrics,omitempty"`
 
-	// Starlark configures Starlark script-based metric generation.
+	// starlark configures Starlark script-based metric generation.
 	// When set, the script generates all samples for this family,
 	// bypassing the normal Metrics/Resolver pipeline.
 	// +optional
 	Starlark *StarlarkConfig `json:"starlark,omitempty"`
 
-	// Resolver overrides the store resolver for this family.
+	// resolver overrides the store resolver for this family.
 	// +optional
 	Resolver ResolverType `json:"resolver,omitempty"`
 
-	// Labels defines additional labels to apply to all metrics in this family.
+	// labels defines additional labels to apply to all metrics in this family.
 	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MinItems=0
+	// +kubebuilder:validation:MaxItems=64
 	Labels []Label `json:"labels,omitempty"`
 
-	// CardinalityLimit sets the maximum cardinality for this family (0 means unlimited).
+	// cardinalityLimit sets the maximum cardinality for this family (0 means unlimited).
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	CardinalityLimit int64 `json:"cardinalityLimit,omitempty"`
 }
 
 // Selectors defines label and field selectors for filtering resources.
+// +kubebuilder:validation:MinProperties=1
 type Selectors struct {
-	// Label is a label selector for filtering resources.
+	// label is a label selector for filtering resources.
 	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
 	Label string `json:"label,omitempty"`
 
-	// Field is a field selector for filtering resources.
+	// field is a field selector for filtering resources.
 	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
 	Field string `json:"field,omitempty"`
 }
 
@@ -214,39 +239,56 @@ type Selectors struct {
 // GVK fields support wildcards ("*") to match multiple resources via API discovery.
 // When using wildcards, the controller will auto-discover matching resources.
 type Store struct {
-	// Group is the API group of the resource (empty string for core resources).
+	// group is the API group of the resource (empty string for core resources).
 	// Supports "*" to match all groups.
-	Group string `json:"group"`
+	// +optional
+	// +kubebuilder:validation:MinLength=0
+	// +kubebuilder:validation:MaxLength=253
+	Group string `json:"group,omitempty"`
 
-	// Version is the API version of the resource. Supports "*" to match all versions.
+	// version is the API version of the resource. Supports "*" to match all versions.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +required
 	Version string `json:"version"`
 
-	// Kind is the kind of the resource.
+	// kind is the kind of the resource.
 	// Supports "*" to match all kinds within the specified group/version.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +required
 	Kind string `json:"kind"`
 
-	// Resource is the plural resource name (e.g. "deployments", "pods").
-	Resource string `json:"resource"`
+	// resource is the plural resource name (e.g. "deployments", "pods").
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Resource string `json:"resource,omitempty"`
 
-	// Selectors defines how to filter the resources to watch.
+	// selectors defines how to filter the resources to watch.
 	// +optional
 	Selectors Selectors `json:"selectors,omitempty"`
 
-	// Families defines the metric families to generate for this resource.
-	// +kubebuilder:validation:Required
+	// families defines the metric families to generate for this resource.
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=128
+	// +required
+	// +listType=atomic
 	Families []Family `json:"families"`
 
-	// Resolver sets the default resolver for all families/metrics in this store.
+	// resolver sets the default resolver for all families/metrics in this store.
 	// If not specified, must be set at the family or metric level.
 	// +optional
 	Resolver ResolverType `json:"resolver,omitempty"`
 
-	// Labels defines additional labels to apply to all metrics in this store.
+	// labels defines additional labels to apply to all metrics in this store.
 	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MinItems=0
+	// +kubebuilder:validation:MaxItems=64
 	Labels []Label `json:"labels,omitempty"`
 
-	// CardinalityLimit sets the maximum cardinality for this store (0 means use default).
+	// cardinalityLimit sets the maximum cardinality for this store (0 means use default).
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	CardinalityLimit int64 `json:"cardinalityLimit,omitempty"`
@@ -254,12 +296,14 @@ type Store struct {
 
 // Configuration defines the metric generation configuration.
 type Configuration struct {
-	// Stores defines the resources to watch and the metrics to generate.
-	// +kubebuilder:validation:Required
+	// stores defines the resources to watch and the metrics to generate.
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=128
+	// +required
+	// +listType=atomic
 	Stores []Store `json:"stores"`
 
-	// CardinalityLimit sets the maximum total cardinality for this RMM (0 means use global default).
+	// cardinalityLimit sets the maximum total cardinality for this RMM (0 means use global default).
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	CardinalityLimit int64 `json:"cardinalityLimit,omitempty"`
@@ -267,51 +311,60 @@ type Configuration struct {
 
 // ResourceMetricsMonitorSpec is the spec for a ResourceMetricsMonitor resource.
 type ResourceMetricsMonitorSpec struct {
-
-	// +kubebuilder:validation:Required
+	// configuration is the RSM configuration that generates metrics.
 	// +required
-
-	// Configuration is the RSM configuration that generates metrics.
 	Configuration Configuration `json:"configuration"`
 }
 
-// +kubebuilder:validation:Optional
-// +optional
-
 // ResourceMetricsMonitorStatus is the status for a ResourceMetricsMonitor resource.
+// +kubebuilder:validation:MinProperties=0
 type ResourceMetricsMonitorStatus struct {
-
-	// +patchMergeKey=type
-	// +patchStrategy=merge
+	// conditions is an array of conditions associated with the resource.
+	// +optional
 	// +listType=map
 	// +listMapKey=type
-
-	// Conditions is an array of conditions associated with the resource.
+	// +kubebuilder:validation:MinItems=0
+	// +kubebuilder:validation:MaxItems=32
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// Cardinality tracks the cardinality metrics for this resource.
+	// cardinality tracks the cardinality metrics for this resource.
+	// +optional
 	Cardinality *CardinalityStatus `json:"cardinality,omitempty"`
 }
 
 // CardinalityStatus tracks cardinality information for the RMM resource.
 type CardinalityStatus struct {
-	// Total is the total number of time series generated by this RMM.
+	// total is the total number of time series generated by this RMM.
+	// +kubebuilder:validation:Minimum=0
+	// +required
 	Total int64 `json:"total"`
 
-	// PerStore maps store identifiers (group/version/kind) to their cardinality.
+	// perStore maps store identifiers (group/version/kind) to their cardinality.
+	// +optional
+	// +kubebuilder:validation:MinProperties=0
 	PerStore map[string]int64 `json:"perStore,omitempty"`
 
-	// PerFamily maps family names to their cardinality.
+	// perFamily maps family names to their cardinality.
+	// +optional
+	// +kubebuilder:validation:MinProperties=0
 	PerFamily map[string]int64 `json:"perFamily,omitempty"`
 
-	// ThresholdsExceeded indicates whether any cardinality threshold has been exceeded.
+	// thresholdsExceeded indicates whether any cardinality threshold has been exceeded.
+	// +required
 	ThresholdsExceeded bool `json:"thresholdsExceeded"`
 
-	// CutoffFamilies lists the families that are currently cut off due to threshold violations.
+	// cutoffFamilies lists the families that are currently cut off due to threshold violations.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MinItems=0
+	// +kubebuilder:validation:MaxItems=128
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=128
 	CutoffFamilies []string `json:"cutoffFamilies,omitempty"`
 
-	// LastUpdated is the timestamp of the last cardinality update.
-	LastUpdated metav1.Time `json:"lastUpdated"`
+	// lastUpdated is the timestamp of the last cardinality update.
+	// +optional
+	LastUpdated metav1.Time `json:"lastUpdated,omitempty"`
 }
 
 // Set sets the given condition for the resource.
@@ -363,7 +416,9 @@ func (status *ResourceMetricsMonitorStatus) Set(
 // ResourceMetricsMonitorList is a list of ResourceMetricsMonitor resources.
 type ResourceMetricsMonitorList struct {
 	metav1.TypeMeta `json:",inline"`
+	// metadata is the standard list metadata.
 	metav1.ListMeta `json:"metadata"`
 
+	// items is the list of ResourceMetricsMonitor objects.
 	Items []ResourceMetricsMonitor `json:"items"`
 }
