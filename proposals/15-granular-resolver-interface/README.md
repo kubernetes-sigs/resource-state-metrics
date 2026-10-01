@@ -134,7 +134,7 @@ fieldParent#0
 fieldParent#1
 ```
 
-The wrapper then parses those keys again using `listIndexRegex` ([`family.go:57`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L57)). That regex is `.+#\d+` and it is unanchored, so a key like `foo#2bar` matches too even though it is not a list entry.
+Two helpers in the wrapper then deal with those keys. `collectIndexedResolvedValues` ([`family.go:417`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L417)) does the real parsing for expansion, splitting on the last `#` and accepting only a canonical number. `listIndexRegex` ([`family.go:57`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L57)) is only used in `resolveLabels` to skip list entries when it walks the remaining keys. That regex is `.+#\d+` and it is unanchored, so a key like `foo#2bar` is treated as a list entry there and dropped from the labels, even though the parser would never accept it as one.
 
 Expanded values also use a `"\x00"` sentinel key ([`family.go:48`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L48)).
 
@@ -186,7 +186,7 @@ Starlark cancels its thread when the timeout is reached ([`starlark.go:119`](htt
 
 `unstructured` does not need the same kind of execution bound because it is walking an object.
 
-There is an opportunity here to share the timeout and metrics handling while still allowing each resolver to have its own execution limits.
+There is an opportunity here to share the timeout and metrics handling while still allowing each resolver to have its own execution limits. That shared piece is a plain function that takes a closure, no generics needed, see Design Details.
 
 ### Helper functions have different behaviour
 
@@ -258,9 +258,11 @@ The first two implementations would be `unstructured` and CEL for `ExpressionRes
 
 ### Typed results
 
-Instead of returning everything through `map[string]string`, the expression resolver would expose one `ResolveValue` method that returns a tagged value, a found flag and an error. The value says whether it is a scalar, a list or a map, and lists and maps can hold values of any of the three kinds.
+Instead of returning everything through `map[string]string`, the expression resolver would split into two steps. `Compile` takes the expression text once and returns an `Expression`, or `ErrInvalidExpression`. `Eval` runs that compiled expression against one object and returns a tagged value, a found flag and an error. The value says whether it is a scalar, a list or a map, and lists and maps can hold values of any of the three kinds.
 
-One method rather than one per kind because the wrapper cannot know the kind up front. `Metric.Value` and `Label.Value` are expression strings, and CEL only learns the result type after evaluating ([`cel.go:347`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L347)). Calling a typed method per kind would mean evaluating the same expression more than once, which breaks `now()` and inflates the cost accounting.
+The split does two things. A bad expression fails once, when the `ResourceMetricsMonitor` is loaded, instead of once per object per resync. And the compiled form is reused, which is what #89 and #101 are already doing for CEL and Starlark on their own. The wrapper compiles every metric value and label expression at config load and keeps the `Expression` next to the family.
+
+One `Eval` rather than one method per kind because the wrapper cannot know the kind up front. `Metric.Value` and `Label.Value` are expression strings, and CEL only learns the result type after evaluating ([`cel.go:347`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L347)). Calling a typed method per kind would mean evaluating the same expression more than once, which breaks `now()` and inflates the cost accounting.
 
 The list index convention and expanded-value sentinel would no longer be needed.
 
@@ -378,7 +380,7 @@ With the new design, they implement one of the resolver contracts, define its tr
 ### Notes/Constraints/Caveats (Optional)
 
 - `pkg/resolver` is under `pkg/`, so it is importable from outside the repository. That makes removing the exported `Resolver` interface a source compatibility break for anyone outside this repo who implements or consumes it.
-- So the new method has a new name, `ResolveValue`, and the concrete types keep the old `Resolve(query, obj) map[string]string` for one release, marked deprecated and implemented by calling `ResolveValue` and re-encoding the result in the old `#index` form. That keeps both kinds of outside caller compiling, code that holds a `resolver.Resolver` and code that calls `Resolve` on `*CELResolver` or `*UnstructuredResolver` directly. `StarlarkResolver.Resolve(obj)` stays the same way next to `ResolveFamilies`. The old interface and the old methods go in the release after. Anything in this repo moves to the new contracts straight away.
+- So the new methods have new names, `Compile` and `Eval`, and the concrete types keep the old `Resolve(query, obj) map[string]string` for one release, marked deprecated and implemented by calling `Compile` and `Eval` and re-encoding the result in the old `#index` form. That keeps both kinds of outside caller compiling, code that holds a `resolver.Resolver` and code that calls `Resolve` on `*CELResolver` or `*UnstructuredResolver` directly. `StarlarkResolver.Resolve(obj)` stays the same way next to `Compile` and `Eval`. The old interface and the old methods go in the release after. Anything in this repo moves to the new contracts straight away.
 - `internal/family.go` is currently the only caller in the repository.
 - Starlark already produces complete families, so `FamilyResolver` mostly makes the existing behaviour explicit.
 - Float formatting will remain resolver-specific initially. Changing it could alter existing metric output, so that should be handled separately.
@@ -425,17 +427,28 @@ type Value struct {
 }
 
 type ExpressionResolver interface {
-	ResolveValue(ctx context.Context, query string, obj map[string]any) (Value, bool, error)
+	// Compile parses the expression once. ErrInvalidExpression surfaces
+	// here, at config load, not per object.
+	Compile(expr string) (Expression, error)
 	Traits() ExpressionTraits
 }
 
+type Expression interface {
+	Eval(ctx context.Context, obj map[string]any) (Value, bool, error)
+}
+
 type FamilyResolver interface {
-	ResolveFamilies(ctx context.Context, obj map[string]any) ([]ResolvedFamily, error)
+	// Compile parses the script once, the same way.
+	Compile(script string) (Script, error)
 	Traits() Traits
+}
+
+type Script interface {
+	Eval(ctx context.Context, obj map[string]any) ([]ResolvedFamily, error)
 }
 ```
 
-`Value` is a small tree. A scalar is a leaf, a list holds values, a map holds values by key, and the wrapper switches on `Kind`. This is what lets one `ResolveValue` call carry whatever the expression produced, including the nested shapes CEL handles today, without the resolver having to guess what the caller wanted.
+`Value` is a small tree. A scalar is a leaf, a list holds values, a map holds values by key, and the wrapper switches on `Kind`. This is what lets one `Eval` call carry whatever the expression produced, including the nested shapes CEL handles today, without the resolver having to guess what the caller wanted.
 
 The rules for the three return values, so the deprecated wrappers cannot change output by reading them differently:
 
@@ -445,11 +458,11 @@ The rules for the three return values, so the deprecated wrappers cannot change 
 - `err` is non `nil` only for a failure to evaluate. Then `found` is `false` and `Value` is the zero value.
 - The zero `Kind` is `KindInvalid`, so `Value{}` is never a valid result. An empty string scalar is `Kind = KindScalar` with `Scalar = ""`, which is distinguishable from the zero value. `Kind` is always one of the three real kinds when `found` is true.
 
-Every resolve method takes a context. The shared timeout wrapper derives a context with the resolver's timeout and cancels it, and each resolver is responsible for stopping when the context is done. That is what makes the wrapper able to stop work rather than just stop waiting:
+Every `Eval` takes a context. The shared timeout wrapper is a plain function, `func bounded(ctx context.Context, timeout time.Duration, resolver string, fn func(context.Context) error) error`, that derives a context with the resolver's timeout, runs the closure, cancels on return and counts the outcome in the evaluations metric. No generics, both `Expression.Eval` and `Script.Eval` call it with a closure. Each resolver is responsible for stopping when the context is done. That is what makes the wrapper able to stop work rather than just stop waiting:
 
 - CEL uses `Program.ContextEval` instead of `Program.Eval`, and the program is built with `cel.InterruptCheckFrequency` set. cel-go only checks the context when that option is non zero, and `cel.go` does not set it today, so both changes are needed. Both exist in cel-go `v0.30.0`, the version in `go.mod`. One limit to be clear about, cel-go checks for interruption inside comprehensions only, `map`, `filter`, `all`, `exists` and the like, every N iterations. A long straight line expression with no loop is not interruptible and stays bounded by the cost limit alone. That covers the slow cases that exist in practice, which are loops over big lists, and it is still strictly better than today, where nothing is interruptible.
 - Starlark keeps `thread.Cancel`, called from a goroutine that waits on `ctx.Done()`. That goroutine also waits on a done channel closed when the script returns, so a successful run under a long lived context does not leave it behind. The shared wrapper derives a per call context with `context.WithTimeout` and cancels it on return in any case, so nothing outlives the call.
-- `unstructured` ignores the context, since walking a map does not block.
+- `unstructured` checks `ctx.Err()` once before the walk and returns it if the context is already done, so a cancelled call never reports success. It does not check again during the walk, since walking a map does not block.
 
 `unstructured` and CEL implement `ExpressionResolver`.
 
@@ -469,8 +482,8 @@ type Traits struct {
 // returns a Value. A family resolver has no Value.Kind to declare.
 type ExpressionTraits struct {
 	Traits
-	Lists bool // can ResolveValue return KindList
-	Maps  bool // can ResolveValue return KindMap
+	Lists bool // can Eval return KindList
+	Maps  bool // can Eval return KindMap
 }
 ```
 
@@ -480,7 +493,7 @@ The exact shape of `SanitizationSpec` and `BoundsSpec` can be worked out during 
 
 ### Errors
 
-Errors should be typed or wrapped so callers can use `errors.Is`, for example:
+Errors should be typed or wrapped so callers can use `errors.Is`. `ErrInvalidExpression` comes out of `Compile`, once, at config load. `ErrBudgetExceeded` comes out of `Eval`. For example:
 
 ```go
 var (
@@ -503,7 +516,7 @@ The exact error types are still open to implementation.
 
 ### Wrapper
 
-The wrapper calls `ResolveValue` once and switches on `Value.Kind`. A scalar is one label value, a list is list expansion, a map is map expansion when the label name starts with `_` and key concatenation otherwise, the same rules as today, now applied to a typed value.
+The wrapper compiles every metric value and label expression once when the `ResourceMetricsMonitor` is loaded. A family whose expression fails to compile is skipped and the error is logged once, the same way an invalid family is handled today ([`config.go:205`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/config.go#L205)), and the other families keep working. Per object it calls `Eval` once per expression and switches on `Value.Kind`. A scalar is one label value, a list is list expansion, a map is map expansion when the label name starts with `_` and key concatenation otherwise, the same rules as today, now applied to a typed value.
 
 Two cases that exist today and keep their behaviour:
 
@@ -528,15 +541,15 @@ One PR per step, so each can be reviewed and merged on its own and nothing waits
 
 1. CEL timeout cancellation as its own fix, `ContextEval` plus `InterruptCheckFrequency`, with a test that a looping expression stops on cancel.
 2. The new interfaces, `Value`, `Traits` and `ExpressionTraits`, the error kinds, the shared timeout wrapper, and the deprecated `Resolve` wrappers, with no behaviour change.
-3. Move `unstructured` to `ResolveValue`, declaring its traits.
-4. Move CEL to `ResolveValue`, declaring its traits.
-5. Move Starlark to `ResolveFamilies`, declaring its traits, with the cancellation watcher that exits on return.
-6. Move the wrapper to the typed results, with the golden fixtures for lists, maps, nested values, null and the missing label field.
+3. Move `unstructured` to `Compile` and `Eval`, declaring its traits, object binding, bounds and which sanitizer it applies.
+4. Move CEL to `Compile` and `Eval`, declaring the same traits plus `Lists` and `Maps`, folding in the environment caching from #89.
+5. Move Starlark to `Compile` and `Eval`, building on the compile once change in #101, declaring its traits, sanitizer included, with the cancellation watcher that exits on return.
+6. Move the wrapper to the typed results, with the golden fixtures for lists, maps, nested values, null, the missing label field, and one fixture per sanitizer path so both are pinned as they are today.
 7. The shared test table in `pkg/resolver`, covering the shared cases and the `quantity` and `labelPrefix` pairs, plus `unix_seconds` and `now` built ins for Starlark so the time rows run on both sides.
 8. The resolver evaluation counter, the mixin alerts updated and the manifests regenerated, the old metric name kept as an alias for one release.
 9. One release later, remove the deprecated `Resolver` interface, the deprecated `Resolve` methods, and the metric alias.
 
-The existing golden tests run at every step. During migration, the old `Resolve` methods stay on the concrete types as deprecated wrappers around `ResolveValue`, so the old `Resolver` interface keeps working. This gives us a way to introduce the new contract without changing every caller in one PR.
+The existing golden tests run at every step. During migration, the old `Resolve` methods stay on the concrete types as deprecated wrappers around `Compile` and `Eval`, so the old `Resolver` interface keeps working. This gives us a way to introduce the new contract without changing every caller in one PR.
 
 ### Test Plan
 
@@ -588,7 +601,8 @@ It is implemented when every deliverable below has landed. Each line maps to one
 - Contract. `ExpressionResolver` and `FamilyResolver` exist, all three resolvers implement them, and `internal/family.go` calls only the new methods.
 - Starlark. `StarlarkResolver` implements `FamilyResolver` and the wrapper has no Starlark specific struct field or code path.
 - Inputs and traits. Every resolver returns `Traits` with `ObjectBinding`, `Sanitization` and `Bounds` filled in, expression resolvers return `ExpressionTraits` with `Lists` and `Maps`, and the wrapper logs an error when a resolver returns a kind it did not declare.
-- Typed results. `ResolveValue` returns a `Value`, the wrapper switches on `Kind`, and `listIndexRegex`, `expandedValueSentinel` and `collectIndexedResolvedValues` are gone.
+- Compile once. Every expression and script is compiled at config load, a bad one skips its family with `ErrInvalidExpression` logged once while the other families keep working, and the compiled form is what runs per object.
+- Typed results. `Eval` returns a `Value`, the wrapper switches on `Kind`, and `listIndexRegex`, `expandedValueSentinel` and `collectIndexedResolvedValues` are gone.
 - Failures. `ErrInvalidExpression` and `ErrBudgetExceeded` exist, the `found` rules hold for every resolver, and a caller cancellation is returned as the context error and not counted.
 - Cancellation. Every resolve method takes a context, the shared timeout wrapper cancels it, CEL evaluates with `ContextEval` and `InterruptCheckFrequency`, the Starlark watcher exits when the script returns, and a timeout test exists per resolver.
 - Sanitization. `Traits.Sanitization` records which helper each resolver applies, both current paths are pinned by golden fixtures, and merging them into one rule is tracked as a follow up issue.
