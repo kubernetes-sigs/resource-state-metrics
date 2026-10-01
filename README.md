@@ -10,7 +10,6 @@
 
 Start developing by following these steps:
 
-- Set up dependencies with `make setup`.
 - Deploy the controller with `make local`.
 - Test out your changes with `make apply_testdata`.
   - Telemetry metrics, by default, are exposed at `:9998/metrics`.
