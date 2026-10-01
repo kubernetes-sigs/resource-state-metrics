@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"k8s.io/klog/v2"
 )
 
@@ -360,4 +362,282 @@ func TestCELResolver_LabelPrefix(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCELResolver_Timeout verifies that a query exceeding the configured
+// timeout falls back to defaultMapping and does not hang or panic.
+func TestCELResolver_Timeout(t *testing.T) {
+	t.Parallel()
+
+	// An extremely short timeout should force the timer branch in Resolve
+	// to fire before resolveWithTimeout can complete, regardless of how
+	// simple the query is.
+	cr := NewCELResolver(klog.NewKlogr(), 10e5, 1*time.Nanosecond, nil, "test-ns", "test-rmm", "test-family")
+
+	query := "o.fields.string"
+	obj := map[string]interface{}{
+		"fields": map[string]interface{}{
+			"string": "bar",
+		},
+	}
+
+	got := cr.Resolve(query, obj)
+	want := map[string]string{query: query}
+
+	if got[query] != want[query] {
+		t.Errorf("expected fallback to default mapping on timeout, got %v, want %v", got, want)
+	}
+}
+
+// TestCELResolver_CostLimitExceeded verifies that a query exceeding the
+// configured cost limit falls back to defaultMapping instead of erroring out
+// or panicking.
+func TestCELResolver_CostLimitExceeded(t *testing.T) {
+	t.Parallel()
+
+	// A cost limit of 0 should be exceeded by essentially any expression,
+	// including a plain field access.
+	cr := NewCELResolver(klog.NewKlogr(), 0, 5*time.Second, nil, "test-ns", "test-rmm", "test-family")
+
+	query := "o.fields.string"
+	obj := map[string]interface{}{
+		"fields": map[string]interface{}{
+			"string": "bar",
+		},
+	}
+
+	got := cr.Resolve(query, obj)
+	want := map[string]string{query: query}
+
+	if got[query] != want[query] {
+		t.Errorf("expected fallback to default mapping on cost limit exceeded, got %v, want %v", got, want)
+	}
+}
+
+// TestCELResolver_MalformedSyntax verifies that queries with genuinely
+// broken CEL syntax (as opposed to valid syntax with a missing field) are
+// caught by env.Parse and fall back to defaultMapping.
+func TestCELResolver_MalformedSyntax(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{
+			name:  "double dot",
+			query: "o.fields..bar",
+		},
+		{
+			name:  "unbalanced parens",
+			query: "o.fields.map(x, x.bar",
+		},
+		{
+			name:  "trailing operator",
+			query: "o.fields.bar +",
+		},
+		{
+			name:  "empty query",
+			query: "",
+		},
+	}
+
+	cr := NewCELResolver(klog.NewKlogr(), 10e5, 5*time.Second, nil, "test-ns", "test-rmm", "test-family")
+	obj := map[string]interface{}{
+		"fields": map[string]interface{}{
+			"bar": "baz",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := cr.Resolve(tt.query, obj)
+			want := map[string]string{tt.query: tt.query}
+
+			if got[tt.query] != want[tt.query] {
+				t.Errorf("expected fallback to default mapping for malformed query %q, got %v", tt.query, got)
+			}
+		})
+	}
+}
+
+// TestCELResolver_UnsupportedOutputType verifies that CEL result types not
+// explicitly handled in processResult (e.g. Duration) fall back to
+// defaultMapping rather than panicking or silently dropping data.
+func TestCELResolver_UnsupportedOutputType(t *testing.T) {
+	t.Parallel()
+
+	cr := NewCELResolver(klog.NewKlogr(), 10e5, 5*time.Second, nil, "test-ns", "test-rmm", "test-family")
+
+	query := `duration("1h")`
+	obj := map[string]interface{}{}
+
+	got := cr.Resolve(query, obj)
+	want := map[string]string{query: query}
+
+	if got[query] != want[query] {
+		t.Errorf("expected fallback to default mapping for unsupported output type, got %v, want %v", got, want)
+	}
+}
+
+// TestCELResolver_ExpressionEvaluationMetric verifies that the success,
+// error, and timeout paths in Resolve correctly increment the provided
+// Prometheus counter, since existing tests all pass nil for this metric.
+func TestCELResolver_ExpressionEvaluationMetric(t *testing.T) {
+	t.Parallel()
+
+	metric := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "test_cel_expression_evaluations_total",
+		Help: "test metric",
+	}, []string{"namespace", "name", "family", "status"})
+
+	obj := map[string]interface{}{
+		"fields": map[string]interface{}{
+			"string": "bar",
+		},
+	}
+
+	t.Run("success increments success counter", func(t *testing.T) {
+		t.Parallel()
+
+		resolver := NewCELResolver(klog.NewKlogr(), 10e5, 5*time.Second, metric, "ns-success", "rmm-success", "family-success")
+		resolver.Resolve("o.fields.string", obj)
+
+		got := testutil.ToFloat64(metric.WithLabelValues("ns-success", "rmm-success", "family-success", "success"))
+		if got != 1 {
+			t.Errorf("expected success counter to be 1, got %v", got)
+		}
+	})
+
+	t.Run("parse error increments error counter", func(t *testing.T) {
+		t.Parallel()
+
+		resolver := NewCELResolver(klog.NewKlogr(), 10e5, 5*time.Second, metric, "ns-error", "rmm-error", "family-error")
+		resolver.Resolve("o.fields..bar", obj)
+
+		got := testutil.ToFloat64(metric.WithLabelValues("ns-error", "rmm-error", "family-error", "error"))
+		if got != 1 {
+			t.Errorf("expected error counter to be 1, got %v", got)
+		}
+	})
+
+	t.Run("timeout increments timeout counter", func(t *testing.T) {
+		t.Parallel()
+
+		resolver := NewCELResolver(klog.NewKlogr(), 10e5, 1*time.Nanosecond, metric, "ns-timeout", "rmm-timeout", "family-timeout")
+		resolver.Resolve("o.fields.string", obj)
+
+		got := testutil.ToFloat64(metric.WithLabelValues("ns-timeout", "rmm-timeout", "family-timeout", "timeout"))
+		if got != 1 {
+			t.Errorf("expected timeout counter to be 1, got %v", got)
+		}
+	})
+}
+
+// TestCELResolver_NestedComposites verifies resolution of deeper composite
+// structures than the single-level array/slice/map cases already covered:
+// a list of maps, a map of lists, and a .map()/.filter() chain.
+func TestCELResolver_NestedComposites(t *testing.T) {
+	t.Parallel()
+
+	resolver := NewCELResolver(klog.NewKlogr(), 10e5, 5*time.Second, nil, "test-ns", "test-rmm", "test-family")
+
+	t.Run("list of maps", func(t *testing.T) {
+		t.Parallel()
+
+		obj := map[string]interface{}{
+			"conditions": []interface{}{
+				map[string]interface{}{"type": "Ready", "status": "True"},
+				map[string]interface{}{"type": "Available", "status": "False"},
+			},
+		}
+
+		got := resolver.Resolve("o.conditions", obj)
+
+		if got["type"] == "" && got["status"] == "" {
+			t.Errorf("expected resolved map keys from nested list-of-maps, got %v", got)
+		}
+	})
+
+	t.Run("map of lists", func(t *testing.T) {
+		t.Parallel()
+
+		obj := map[string]interface{}{
+			"groups": map[string]interface{}{
+				"admins": []interface{}{"alice", "bob"},
+			},
+		}
+
+		got := resolver.Resolve("o.groups", obj)
+
+		found := false
+
+		for k, v := range got {
+			if v == "alice" || v == "bob" {
+				found = true
+
+				_ = k
+			}
+		}
+
+		if !found {
+			t.Errorf("expected resolved values from nested map-of-lists, got %v", got)
+		}
+	})
+
+	t.Run("map chain over list", func(t *testing.T) {
+		t.Parallel()
+
+		obj := map[string]interface{}{
+			"conditions": []interface{}{
+				map[string]interface{}{"type": "Ready"},
+				map[string]interface{}{"type": "Available"},
+			},
+		}
+
+		got := resolver.Resolve("o.conditions.map(c, c.type)", obj)
+
+		found := false
+
+		for _, v := range got {
+			if v == "Ready" || v == "Available" {
+				found = true
+			}
+		}
+
+		if !found {
+			t.Errorf("expected resolved values from .map() chain, got %v", got)
+		}
+	})
+
+	t.Run("filter then map chain", func(t *testing.T) {
+		t.Parallel()
+
+		obj := map[string]interface{}{
+			"conditions": []interface{}{
+				map[string]interface{}{"type": "Ready", "status": "True"},
+				map[string]interface{}{"type": "Available", "status": "False"},
+			},
+		}
+
+		got := resolver.Resolve(`o.conditions.filter(c, c.status == "True").map(c, c.type)`, obj)
+
+		found := false
+
+		for _, v := range got {
+			if v == "Ready" {
+				found = true
+			}
+
+			if v == "Available" {
+				t.Errorf("filter should have excluded Available condition, got %v", got)
+			}
+		}
+
+		if !found {
+			t.Errorf("expected Ready condition to survive filter+map chain, got %v", got)
+		}
+	})
 }
