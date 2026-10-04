@@ -197,7 +197,10 @@ func (c *configurer) buildStoreFromConfig(ctx context.Context, store *v1alpha1.S
 
 	families := make([]*FamilyType, len(store.Families))
 	for idx := range store.Families {
-		families[idx] = &FamilyType{Family: store.Families[idx]}
+		families[idx] = &FamilyType{
+			Family:      store.Families[idx],
+			storeLabels: store.Labels,
+		}
 
 		// Validate and instantiate StarlarkResolver
 		if store.Families[idx].Resolver == v1alpha1.ResolverTypeStarlark {
