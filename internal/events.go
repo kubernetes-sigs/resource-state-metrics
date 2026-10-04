@@ -53,13 +53,38 @@ func (e eventType) String() string {
 	return []string{"addEvent", "updateEvent", "deleteEvent"}[e]
 }
 
-func (c *Controller) handleEvent(ctx context.Context, stores *sync.Map, event string, o metav1.Object) error {
+func (c *Controller) handleEvent(ctx context.Context, stores *sync.Map, event string, object metav1.Object) error {
 	logger := klog.FromContext(ctx)
 
-	resource, err := c.validateAndPrepareResource(ctx, o, event)
+	// Deletes skip validateAndPrepareResource/emitSuccess entirely: the
+	// resource is already gone from the API server by the time a delete event
+	// is processed, so any Get/UpdateStatus against it would always fail with
+	// NotFound, short-circuiting handleEvent before the stores were torn down.
+	if event == deleteEvent.String() {
+		resource, ok := object.(*v1alpha1.ResourceMetricsMonitor)
+		if !ok {
+			logger.Error(errors.New("failed to cast object to ResourceMetricsMonitor"), "cannot handle event")
+			c.eventsProcessed.WithLabelValues(object.GetNamespace(), object.GetName(), event, "failed").Inc()
+
+			return nil
+		}
+
+		if err := c.processDelete(stores, resource); err != nil {
+			logger.Error(err, "event processing failed")
+			c.eventsProcessed.WithLabelValues(resource.GetNamespace(), resource.GetName(), event, "failed").Inc()
+
+			return nil
+		}
+
+		c.eventsProcessed.WithLabelValues(resource.GetNamespace(), resource.GetName(), event, "success").Inc()
+
+		return nil
+	}
+
+	resource, err := c.validateAndPrepareResource(ctx, object, event)
 	if err != nil {
 		logger.Error(err, "resource validation and preparation failed")
-		c.eventsProcessed.WithLabelValues(o.GetNamespace(), o.GetName(), event, "failed").Inc()
+		c.eventsProcessed.WithLabelValues(object.GetNamespace(), object.GetName(), event, "failed").Inc()
 
 		return nil
 	}
@@ -189,19 +214,60 @@ func (c *Controller) processAddOrUpdate(ctx context.Context, stores *sync.Map, _
 }
 
 func (c *Controller) processDelete(stores *sync.Map, resource *v1alpha1.ResourceMetricsMonitor) error {
+	namespace, name := resource.GetNamespace(), resource.GetName()
+
+	if storesI, ok := stores.Load(resource.GetUID()); ok {
+		if storesList, ok := storesI.([]*StoreType); ok {
+			c.deleteStoreCardinalityMetrics(namespace, name, storesList)
+		}
+	}
+
 	stores.Delete(resource.GetUID())
-	c.resourcesMonitored.DeleteLabelValues(resource.GetNamespace(), resource.GetName())
+	c.resourcesMonitored.DeleteLabelValues(namespace, name)
 
 	// Clean up cardinality tracking
 	c.globalCardinalityManager.DeleteResource(resource.GetUID())
 
 	// Clean up cardinality metrics
-	c.resourceCardinality.DeleteLabelValues(resource.GetNamespace(), resource.GetName())
+	c.resourceCardinality.DeleteLabelValues(namespace, name)
+	c.resourceCardinalityLimit.DeleteLabelValues(namespace, name)
 
 	// Update global cardinality metric
 	c.globalCardinality.Set(float64(c.globalCardinalityManager.GetGlobalTotal()))
 
 	return nil
+}
+
+// deleteStoreCardinalityMetrics removes the per-store and per-family
+// cardinality gauges (and their limits and duplicate counters) for a
+// resource's stores, mirroring the label sets aggregateStoreCardinality and
+// configurer.build populate them with.
+func (c *Controller) deleteStoreCardinalityMetrics(namespace, name string, storesList []*StoreType) {
+	for _, store := range storesList {
+		storeID := store.GetStoreIdentifier()
+		c.storeCardinality.DeleteLabelValues(namespace, name, storeID)
+		c.storeCardinalityLimit.DeleteLabelValues(namespace, name, storeID)
+		c.duplicateStores.DeleteLabelValues(namespace, name, storeID)
+
+		if store.cardinalityTracker == nil {
+			continue
+		}
+
+		// Union cardinalities and thresholds: a family only gets a
+		// cardinality entry once it has generated at least one sample, and
+		// only gets a threshold entry when it has a non-zero CardinalityLimit
+		// (see builder.go), so neither map alone is guaranteed complete.
+		families := store.cardinalityTracker.GetAllFamilyCardinalities()
+		for family := range store.cardinalityTracker.GetAllFamilyThresholds() {
+			families[family] = 0
+		}
+
+		for family := range families {
+			c.familyCardinality.DeleteLabelValues(namespace, name, "", family)
+			c.familyCardinalityLimit.DeleteLabelValues(namespace, name, "", family)
+			c.duplicateFamilies.DeleteLabelValues(namespace, name, family)
+		}
+	}
 }
 
 func (c *Controller) emitSuccess(ctx context.Context, monitor *v1alpha1.ResourceMetricsMonitor, statusBool metav1.ConditionStatus, message string) (*v1alpha1.ResourceMetricsMonitor, error) {
