@@ -8,7 +8,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/iancoleman/strcase v0.3.0
 	github.com/prometheus/client_golang v1.24.1
-	github.com/prometheus/common v0.71.0
+	github.com/prometheus/common v0.72.0
 	go.starlark.net v0.0.0-20260210143700-b62fd896b91b
 	golang.org/x/text v0.42.0
 	golang.org/x/time v0.16.0
