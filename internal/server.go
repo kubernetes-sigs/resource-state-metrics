@@ -136,6 +136,13 @@ func (s *selfServer) build(ctx context.Context, client kubernetes.Interface, gat
 	}
 }
 
+// gzipWriterPool reuses gzip writers across scrapes to avoid re-allocating compression state on every request.
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		return gzip.NewWriter(nil)
+	},
+}
+
 func parseQuality(params []string) float64 {
 	for _, param := range params {
 		param = strings.TrimSpace(param)
@@ -149,9 +156,11 @@ func parseQuality(params []string) float64 {
 	return 1.0
 }
 
+// acceptsGzip reports whether gzip should be used for the response, based on the request's Accept-Encoding header
+// (RFC 9110, section 12.5.3). Gzip is selected only if it is acceptable (q > 0) and is not outweighed by identity. Ties
+// are resolved in favor of gzip. Codings without an explicit entry inherit the quality of "*", if present.
 func acceptsGzip(header http.Header) bool {
-	gzipQuality := -1.0
-	starQuality := -1.0
+	qualities := map[string]float64{}
 
 	for _, v := range header.Values("Accept-Encoding") {
 		for _, clause := range strings.Split(v, ",") {
@@ -162,22 +171,25 @@ func acceptsGzip(header http.Header) bool {
 
 			parts := strings.Split(clause, ";")
 			encoding := strings.ToLower(strings.TrimSpace(parts[0]))
-			q := parseQuality(parts[1:])
-
-			switch encoding {
-			case "gzip":
-				gzipQuality = q
-			case "*":
-				starQuality = q
-			}
+			qualities[encoding] = parseQuality(parts[1:])
 		}
 	}
 
-	if gzipQuality >= 0 {
-		return gzipQuality > 0
+	qualityOf := func(encoding string) float64 {
+		if q, ok := qualities[encoding]; ok {
+			return q
+		}
+
+		if q, ok := qualities["*"]; ok {
+			return q
+		}
+
+		return -1
 	}
 
-	return starQuality > 0
+	gzipQuality := qualityOf("gzip")
+
+	return gzipQuality > 0 && gzipQuality >= qualityOf("identity")
 }
 
 func createMetricsHandler(server *mainServer, logger klog.Logger, binarySemaphore *sync.RWMutex, generator func(w io.Writer)) http.HandlerFunc {
@@ -185,7 +197,7 @@ func createMetricsHandler(server *mainServer, logger klog.Logger, binarySemaphor
 		binarySemaphore.RLock()
 		defer binarySemaphore.RUnlock()
 
-		writer.Header().Set("Vary", "Accept-Encoding")
+		writer.Header().Add("Vary", "Accept-Encoding")
 
 		contentType := expfmt.NegotiateIncludingOpenMetrics(request.Header)
 		if contentType.FormatType() != expfmt.TypeOpenMetrics {
@@ -199,12 +211,19 @@ func createMetricsHandler(server *mainServer, logger klog.Logger, binarySemaphor
 		if acceptsGzip(request.Header) {
 			writer.Header().Set("Content-Encoding", "gzip")
 
-			gz := gzip.NewWriter(writer)
+			gz, ok := gzipWriterPool.Get().(*gzip.Writer)
+			if !ok {
+				gz = gzip.NewWriter(nil)
+			}
+
+			gz.Reset(writer)
 
 			defer func() {
 				if err := gz.Close(); err != nil {
 					logger.Error(err, "error closing gzip writer", "source", server.source)
 				}
+
+				gzipWriterPool.Put(gz)
 			}()
 
 			out = gz

@@ -22,6 +22,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -118,6 +120,42 @@ func TestMainServerGzipCompression(t *testing.T) {
 			expectGzip:     false,
 		},
 		{
+			name:           "metrics with identity preferred over gzip",
+			path:           "/metrics",
+			acceptEncoding: "gzip;q=0.5, identity;q=1",
+			expectGzip:     false,
+		},
+		{
+			name:           "metrics with gzip preferred over identity",
+			path:           "/metrics",
+			acceptEncoding: "gzip;q=1, identity;q=0.5",
+			expectGzip:     true,
+		},
+		{
+			name:           "metrics with gzip and identity at equal quality",
+			path:           "/metrics",
+			acceptEncoding: "identity, gzip",
+			expectGzip:     true,
+		},
+		{
+			name:           "metrics with identity preferred over wildcard",
+			path:           "/metrics",
+			acceptEncoding: "*;q=0.5, identity",
+			expectGzip:     false,
+		},
+		{
+			name:           "metrics with gzip in separate header values",
+			path:           "/metrics",
+			acceptEncoding: "deflate|gzip;q=0.8",
+			expectGzip:     true,
+		},
+		{
+			name:           "metrics with identity only",
+			path:           "/metrics",
+			acceptEncoding: "identity",
+			expectGzip:     false,
+		},
+		{
 			name:           "external without gzip",
 			path:           "/external",
 			acceptEncoding: "",
@@ -131,13 +169,17 @@ func TestMainServerGzipCompression(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
-			if tt.acceptEncoding != "" {
-				req.Header.Set("Accept-Encoding", tt.acceptEncoding)
+			req := httptest.NewRequest(http.MethodGet, testCase.path, nil)
+
+			// "|" separates repeated Accept-Encoding header values.
+			for _, value := range strings.Split(testCase.acceptEncoding, "|") {
+				if value != "" {
+					req.Header.Add("Accept-Encoding", value)
+				}
 			}
 
 			rec := httptest.NewRecorder()
@@ -146,11 +188,11 @@ func TestMainServerGzipCompression(t *testing.T) {
 			resp := rec.Result()
 			defer resp.Body.Close()
 
-			if vary := resp.Header.Get("Vary"); vary != "Accept-Encoding" {
-				t.Errorf("expected Vary header 'Accept-Encoding', got '%s'", vary)
+			if vary := resp.Header.Values("Vary"); !slices.Contains(vary, "Accept-Encoding") {
+				t.Errorf("expected Vary header to contain 'Accept-Encoding', got '%v'", vary)
 			}
 
-			if tt.expectGzip {
+			if testCase.expectGzip {
 				verifyGzipResponse(t, resp)
 			} else {
 				verifyUncompressedResponse(t, resp)
