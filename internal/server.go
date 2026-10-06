@@ -44,6 +44,13 @@ const (
 	readHeaderTimeout = 5 * time.Second
 )
 
+// negotiableFormats lists the exposition formats served on metrics endpoints, in order of preference.
+var negotiableFormats = []expfmt.Format{
+	expfmt.NewFormat(expfmt.TypeOpenMetrics),
+	expfmt.Format(expfmt.OpenMetricsType + "; version=" + expfmt.OpenMetricsVersion_0_0_1 + "; charset=utf-8"),
+	expfmt.NewFormat(expfmt.TypeTextPlain),
+}
+
 // server defines behaviours for a Prometheus-based exposition server.
 type server interface {
 	// Build sets up the server with the given gatherer.
@@ -199,10 +206,19 @@ func createMetricsHandler(server *mainServer, logger klog.Logger, binarySemaphor
 
 		writer.Header().Add("Vary", "Accept-Encoding")
 
-		contentType := expfmt.NegotiateIncludingOpenMetrics(request.Header)
-		if contentType.FormatType() != expfmt.TypeOpenMetrics {
-			contentType = expfmt.NewFormat(expfmt.TypeTextPlain)
-		}
+		// * The focus here is textual-only, in-line with a gauge-only philosophy.
+		// * Prometheus may support `info`, `stateset`, `gaugehistogram`, etc.
+		// OpenMetrics types in the future, but the focus here will remain the
+		// same, i.e., we'll only ever push `gauge` metrics, and show the same in
+		// their metadata.
+		// * NOTE By opting-into OpenMetrics below, we are contractually
+		// obligated to support expfmt.MetricFamilyToOpenMetrics conventions at
+		// all times, for the parts that impact us (`gauge` metrics, in our
+		// case).
+		// Refer: https://pkg.go.dev/github.com/prometheus/common@v0.67.5/expfmt#MetricFamilyToOpenMetrics
+		// * Only text-based formats are offered during negotiation, i.e.,
+		// OpenMetrics (preferred) or the Prometheus text format as fallback.
+		contentType := expfmt.NegotiateAccept(request.Header, negotiableFormats...)
 
 		writer.Header().Set("Content-Type", string(contentType))
 
