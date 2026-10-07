@@ -220,7 +220,7 @@ type Family struct {
 }
 
 // Selectors defines label and field selectors for filtering resources.
-// +kubebuilder:validation:MinProperties=1
+// +kubebuilder:validation:MinProperties=0
 type Selectors struct {
 	// label is a label selector for filtering resources.
 	// +optional
@@ -260,10 +260,10 @@ type Store struct {
 	Kind string `json:"kind"`
 
 	// resource is the plural resource name (e.g. "deployments", "pods").
-	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
-	Resource string `json:"resource,omitempty"`
+	// +required
+	Resource string `json:"resource"`
 
 	// selectors defines how to filter the resources to watch.
 	// +optional

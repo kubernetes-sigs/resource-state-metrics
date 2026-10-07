@@ -306,7 +306,7 @@ spec:
                         selectors:
                           description: selectors defines how to filter the resources
                             to watch.
-                          minProperties: 1
+                          minProperties: 0
                           properties:
                             field:
                               description: field is a field selector for filtering
@@ -330,6 +330,7 @@ spec:
                       required:
                       - families
                       - kind
+                      - resource
                       - version
                       type: object
                     maxItems: 128
