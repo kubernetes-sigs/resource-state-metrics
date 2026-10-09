@@ -260,13 +260,13 @@ The first two implementations would be `unstructured` and CEL for `ExpressionRes
 
 Instead of returning everything through `map[string]string`, the expression resolver would split into two steps. `Compile` takes the expression text once and returns an `Expression`, or `ErrInvalidExpression`. `Eval` runs that compiled expression against one object and returns a tagged value, a found flag and an error. The value says whether it is a scalar, a list or a map, and lists and maps can hold values of any of the three kinds.
 
-The split does two things. A bad expression fails once, when the `ResourceMetricsMonitor` is loaded, instead of once per object per resync. And the compiled form is reused, which is what #89 and #101 are already doing for CEL and Starlark on their own. The wrapper compiles every metric value and label expression at config load and keeps the `Expression` next to the family.
+The split does two things. A bad expression fails once, when the `ResourceMetricsMonitor` is loaded, instead of once per object per resync. And the compiled form is reused, which is what #89 and #101 are already doing for CEL and Starlark on their own. The wrapper compiles every metric value and label expression at config load and keeps each `Expression` next to the metric or label it came from, compiled by that metric's effective resolver. `Metric.Resolver` can override the family's resolver ([`family.go:177`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L177)), and the family labels are inherited by every metric and evaluated under that metric's resolver, so a family label used by metrics with different resolvers is compiled once per resolver.
 
 One `Eval` rather than one method per kind because the wrapper cannot know the kind up front. `Metric.Value` and `Label.Value` are expression strings, and CEL only learns the result type after evaluating ([`cel.go:347`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L347)). Calling a typed method per kind would mean evaluating the same expression more than once, which breaks `now()` and inflates the cost accounting.
 
 The list index convention and expanded-value sentinel would no longer be needed.
 
-The wrapper would receive a list as a list and a map as a map, and it keeps doing the expansion. Nested lists and maps come back nested, so the flattening CEL does today ([`cel.go:410`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L410) to [`cel.go:434`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L434)) moves into the wrapper as a written down rule with a golden fixture, instead of disappearing. Whether that flattening should stay long term is an open question below.
+The wrapper would receive a list as a list and a map as a map, and it keeps doing the expansion. Nested lists and maps come back nested, so the flattening CEL does today ([`cel.go:410`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L410) to [`cel.go:434`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L434)) moves into the wrapper as a written down rule with a golden fixture, instead of disappearing. A list of maps is the lossy case. Today each map inside a list goes through the map helper with no element index ([`cel.go:415`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L415)), so the keys of every map land in one label map and a later element overwrites an earlier one with the same key. The wrapper reproduces exactly that for now and the fixture pins it, so whether to keep it or reject it is the open question below and not a side effect of this change.
 
 ### Explicit errors
 
@@ -288,13 +288,13 @@ For example:
 - CEL has a timeout and cost limit.
 - Starlark has a timeout and step limit.
 - `unstructured` does not need an execution timeout.
-- CEL can return lists and maps, so list and map expansion work with it. `unstructured` only returns scalars.
+- CEL can return lists and maps, so list and map expansion work with it. `unstructured` never expands. It returns one value per query, and when the path points at a list or a map it returns the `%v` string of it, the way it does today ([`unstructured.go:60`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/unstructured.go#L60)). `Lists` and `Maps` false means no expansion, not that a composite field is an error, and a fixture pins that string.
 
 That last one is the underscore expansion trait #15 asks for. Today expansion is a wrapper decision made after evaluation, a non scalar result plus a leading `_` on the label name means map expansion ([`family.go:346`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L346)), and nothing tells the wrapper whether the resolver can produce a list or a map at all. The trait says which of the two a resolver can return. It cannot be checked at config load, since the result kind is only known after evaluation, so it is used in three places instead: the shared test table skips list and map cases for resolvers that declare neither, the docs for each resolver state it, and the wrapper logs a clear error if a resolver returns a kind it did not declare.
 
 ### Shared timeout handling
 
-Timeout handling and resolver evaluation metrics should be moved into shared code where possible.
+Timeout handling should move into shared code, and the evaluation counter should become one metric shared by every resolver, each incrementing it with its own labels.
 
 Every resolve method takes a `context.Context`. The shared wrapper owns the timeout and cancels the context, and each resolver stops when the context is done. CEL and Starlark still provide their own limits, cost and steps.
 
@@ -308,7 +308,7 @@ The equivalent functions in CEL and Starlark should have documented behaviour, a
 - `labelPrefix` in CEL and `label_prefix` in Starlark. Same job, different name.
 - `unixSeconds` and `now` in CEL have no Starlark equivalent. Starlark gets the whole `time` module instead ([`starlark.go:133`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L133)), with `time.now()`, `time.parse_time()` and friends, which is a different and larger surface.
 
-So the shared table covers the first two pairs from the start, with the edge cases written down, an empty quantity being the obvious one. For time, the proposal is to add `unix_seconds(s)` and `now()` built ins to Starlark that mirror the CEL functions, and keep the `time` module as it is, so the time rows can run against both. The names differ per DSL because each follows its own naming convention, the table maps them.
+So the shared table covers the first two pairs from the start, with the edge cases written down. The empty quantity is the known one. CEL's `quantity("")` returns `0` ([`cel.go:244`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L244)) and Starlark's `quantity_to_float("")` returns an error ([`starlark.go:175`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L175)). Converging them changes CEL output, so that row carries a per resolver expected value, and picking the single rule gets its own tracking issue, the same way the two sanitizers do (#115). For time, the proposal is to add `unix_seconds(s)` and `now()` built ins to Starlark that mirror the CEL functions, and keep the `time` module as it is, so the time rows can run against both. The names differ per DSL because each follows its own naming convention, the table maps them.
 
 ### Shared tests
 
@@ -458,7 +458,7 @@ The rules for the three return values, so the deprecated wrappers cannot change 
 - `err` is non `nil` only for a failure to evaluate. Then `found` is `false` and `Value` is the zero value.
 - The zero `Kind` is `KindInvalid`, so `Value{}` is never a valid result. An empty string scalar is `Kind = KindScalar` with `Scalar = ""`, which is distinguishable from the zero value. `Kind` is always one of the three real kinds when `found` is true.
 
-Every `Eval` takes a context. The shared timeout wrapper is a plain function, `func bounded(ctx context.Context, timeout time.Duration, resolver string, fn func(context.Context) error) error`, that derives a context with the resolver's timeout, runs the closure, cancels on return and counts the outcome in the evaluations metric. No generics, both `Expression.Eval` and `Script.Eval` call it with a closure. Each resolver is responsible for stopping when the context is done. That is what makes the wrapper able to stop work rather than just stop waiting:
+Every `Eval` takes a context. The shared timeout wrapper is a plain function, `func bounded(ctx context.Context, timeout time.Duration, resolver string, fn func(context.Context) error) error`, that derives a context with the resolver's timeout, runs the closure and cancels on return. It does not touch metrics. The caller maps the returned error to a `result` value, `success`, `error` or `timeout`, and increments `resolver_evaluations_total` with its own `namespace`, `name`, `family` and `resolver` labels, the way the CEL resolver already increments `cel_evaluations_total` with its own labels today ([`cel.go:124`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L124) to [`cel.go:139`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L139)). Keeping the labels with the resolver is what lets the helper stay a plain function. No generics, both `Expression.Eval` and `Script.Eval` call it with a closure. Each resolver is responsible for stopping when the context is done. That is what makes the wrapper able to stop work rather than just stop waiting:
 
 - CEL uses `Program.ContextEval` instead of `Program.Eval`, and the program is built with `cel.InterruptCheckFrequency` set. cel-go only checks the context when that option is non zero, and `cel.go` does not set it today, so both changes are needed. Both exist in cel-go `v0.30.0`, the version in `go.mod`. One limit to be clear about, cel-go checks for interruption inside comprehensions only, `map`, `filter`, `all`, `exists` and the like, every N iterations. A long straight line expression with no loop is not interruptible and stays bounded by the cost limit alone. That covers the slow cases that exist in practice, which are loops over big lists, and it is still strictly better than today, where nothing is interruptible.
 - Starlark keeps `thread.Cancel`, called from a goroutine that waits on `ctx.Done()`. That goroutine also waits on a done channel closed when the script returns, so a successful run under a long lived context does not leave it behind. The shared wrapper derives a per call context with `context.WithTimeout` and cancels it on return in any case, so nothing outlives the call.
@@ -487,7 +487,7 @@ type ExpressionTraits struct {
 }
 ```
 
-`Lists` and `Maps` are the expansion trait, split because a resolver may well support one and not the other. Both `true` for CEL, both `false` for `unstructured`. They live on `ExpressionTraits` and not on `Traits` because a family resolver returns whole families, there is no result kind for it to declare, and it should not have to publish meaningless flags. They are not a load time check, the result kind is only known after evaluation. They drive the shared test table, the docs, and a wrapper error if a resolver returns a kind it did not declare.
+`Lists` and `Maps` are the expansion trait, split because a resolver may well support one and not the other. Both `true` for CEL, both `false` for `unstructured`, where false means a composite field is never expanded and still comes back as the same `%v` string as today. They live on `ExpressionTraits` and not on `Traits` because a family resolver returns whole families, there is no result kind for it to declare, and it should not have to publish meaningless flags. They are not a load time check, the result kind is only known after evaluation. They drive the shared test table, the docs, and a wrapper error if a resolver returns a kind it did not declare.
 
 The exact shape of `SanitizationSpec` and `BoundsSpec` can be worked out during implementation.
 
@@ -508,7 +508,7 @@ At minimum, the wrapper needs to distinguish:
 - budget exceeded
 - evaluation failure
 
-A cancellation that comes from the caller, for example the controller shutting down, is returned as the context's own error, `context.Canceled`. It is neither a budget error nor an evaluation failure, and the wrapper does not count it in the evaluations metric, so a shutdown does not show up as a burst of timeouts.
+A cancellation that comes from the caller, for example the controller shutting down, is returned as the context's own error, `context.Canceled`. It is neither a budget error nor an evaluation failure, and it is not counted in the evaluations metric, so a shutdown does not show up as a burst of timeouts.
 
 A missing value is not an error. It is `found = false` with a `nil` error, see the rules above.
 
@@ -516,7 +516,7 @@ The exact error types are still open to implementation.
 
 ### Wrapper
 
-The wrapper compiles every metric value and label expression once when the `ResourceMetricsMonitor` is loaded. A family whose expression fails to compile is skipped and the error is logged once, the same way an invalid family is handled today ([`config.go:205`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/config.go#L205)), and the other families keep working. Per object it calls `Eval` once per expression and switches on `Value.Kind`. A scalar is one label value, a list is list expansion, a map is map expansion when the label name starts with `_` and key concatenation otherwise, the same rules as today, now applied to a typed value.
+The wrapper compiles every metric value and label expression once when the `ResourceMetricsMonitor` is loaded. A metric whose value or label expression fails to compile is skipped and the error is logged once at load, and the rest of the family and the other families keep working. That is the per metric skip the wrapper does today when a resolution fails ([`family.go:179`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L179) and [`family.go:189`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L189)), moved from per object to load time. A Starlark family is one script, so a script that fails to compile skips that family, the same way a family with a missing Starlark config is skipped today ([`config.go:205`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/config.go#L205)). Per object it calls `Eval` once per expression and switches on `Value.Kind`. A scalar is one label value, a list is list expansion, a map is map expansion when the label name starts with `_` and key concatenation otherwise, the same rules as today, now applied to a typed value.
 
 Two cases that exist today and keep their behaviour:
 
@@ -540,16 +540,16 @@ and then being parsed again.
 One PR per step, so each can be reviewed and merged on its own and nothing waits on a bigger change.
 
 1. CEL timeout cancellation as its own fix, `ContextEval` plus `InterruptCheckFrequency`, with a test that a looping expression stops on cancel.
-2. The new interfaces, `Value`, `Traits` and `ExpressionTraits`, the error kinds, the shared timeout wrapper, and the deprecated `Resolve` wrappers, with no behaviour change.
-3. Move `unstructured` to `Compile` and `Eval`, declaring its traits, object binding, bounds and which sanitizer it applies.
-4. Move CEL to `Compile` and `Eval`, declaring the same traits plus `Lists` and `Maps`, folding in the environment caching from #89.
-5. Move Starlark to `Compile` and `Eval`, building on the compile once change in #101, declaring its traits, sanitizer included, with the cancellation watcher that exits on return.
+2. The new interfaces, `Value`, `Traits` and `ExpressionTraits`, the error kinds and the shared timeout wrapper. Nothing implements them yet, so no behaviour change.
+3. Move `unstructured` to `Compile` and `Eval`, declaring its traits, object binding, bounds and which sanitizer it applies, with its `Resolve` kept as the deprecated wrapper around them.
+4. Move CEL to `Compile` and `Eval`, declaring the same traits plus `Lists` and `Maps`, folding in the environment caching from #89, with its `Resolve` kept as the deprecated wrapper.
+5. Move Starlark to `Compile` and `Eval`, building on the compile once change in #101, declaring its traits, sanitizer included, with the cancellation watcher that exits on return, and its `Resolve(obj)` kept as the deprecated wrapper.
 6. Move the wrapper to the typed results, with the golden fixtures for lists, maps, nested values, null, the missing label field, and one fixture per sanitizer path so both are pinned as they are today.
 7. The shared test table in `pkg/resolver`, covering the shared cases and the `quantity` and `labelPrefix` pairs, plus `unix_seconds` and `now` built ins for Starlark so the time rows run on both sides.
 8. The resolver evaluation counter, the mixin alerts updated and the manifests regenerated, the old metric name kept as an alias for one release.
 9. One release later, remove the deprecated `Resolver` interface, the deprecated `Resolve` methods, and the metric alias.
 
-The existing golden tests run at every step. During migration, the old `Resolve` methods stay on the concrete types as deprecated wrappers around `Compile` and `Eval`, so the old `Resolver` interface keeps working. This gives us a way to introduce the new contract without changing every caller in one PR.
+The existing golden tests run at every step. During migration, each old `Resolve` method stays unchanged until its resolver moves in steps 3 to 5, and from then on it is a deprecated wrapper around `Compile` and `Eval`, so the old `Resolver` interface keeps working throughout. This gives us a way to introduce the new contract without changing every caller in one PR.
 
 ### Test Plan
 
@@ -601,12 +601,12 @@ It is implemented when every deliverable below has landed. Each line maps to one
 - Contract. `ExpressionResolver` and `FamilyResolver` exist, all three resolvers implement them, and `internal/family.go` calls only the new methods.
 - Starlark. `StarlarkResolver` implements `FamilyResolver` and the wrapper has no Starlark specific struct field or code path.
 - Inputs and traits. Every resolver returns `Traits` with `ObjectBinding`, `Sanitization` and `Bounds` filled in, expression resolvers return `ExpressionTraits` with `Lists` and `Maps`, and the wrapper logs an error when a resolver returns a kind it did not declare.
-- Compile once. Every expression and script is compiled at config load, a bad one skips its family with `ErrInvalidExpression` logged once while the other families keep working, and the compiled form is what runs per object.
+- Compile once. Every expression and script is compiled at config load. A bad expression skips its metric and a bad Starlark script skips its family, with `ErrInvalidExpression` logged once while everything else keeps working, and the compiled form is what runs per object.
 - Typed results. `Eval` returns a `Value`, the wrapper switches on `Kind`, and `listIndexRegex`, `expandedValueSentinel` and `collectIndexedResolvedValues` are gone.
 - Failures. `ErrInvalidExpression` and `ErrBudgetExceeded` exist, the `found` rules hold for every resolver, and a caller cancellation is returned as the context error and not counted.
 - Cancellation. Every resolve method takes a context, the shared timeout wrapper cancels it, CEL evaluates with `ContextEval` and `InterruptCheckFrequency`, the Starlark watcher exits when the script returns, and a timeout test exists per resolver.
 - Sanitization. `Traits.Sanitization` records which helper each resolver applies, both current paths are pinned by golden fixtures, and merging them into one rule is tracked as a follow up issue.
-- Helper functions. The shared test table covers `quantity` and `labelPrefix` on both DSLs with the edge cases written down, and Starlark has `unix_seconds` and `now` so the time rows run on both.
+- Helper functions. The shared test table covers `quantity` and `labelPrefix` on both DSLs with the edge cases written down, the empty quantity row carrying a per resolver value until its follow up issue picks one, and Starlark has `unix_seconds` and `now` so the time rows run on both.
 - Metrics. `resolver_evaluations_total` with a `resolver` label replaces `cel_evaluations_total`, the mixin alerts query it, the manifests are regenerated, and the alias is removed one release later.
 - Output. The existing golden fixtures pass unchanged, and the new fixtures for lists, maps, nested values, null and the missing label field are in.
 - Tests. The shared test table runs in CI and is the documented way in for a fourth resolver.
