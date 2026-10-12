@@ -361,3 +361,62 @@ func TestCELResolver_LabelPrefix(t *testing.T) {
 		})
 	}
 }
+
+// Whole numbers decoded by apimachinery are int64, and must resolve inside a
+// map the same way they do inside a list or on their own.
+func TestCELResolver_MapScalarTypes(t *testing.T) {
+	t.Parallel()
+
+	obj := map[string]interface{}{
+		"spec": map[string]interface{}{
+			"counts": map[string]interface{}{
+				"replicas": int64(3),
+				"ready":    uint64(2),
+				"tier":     "web",
+			},
+			"list": []interface{}{int64(7), "x"},
+		},
+	}
+	tests := []struct {
+		name  string
+		query string
+		want  map[string]string
+	}{
+		{
+			name:  "int64 and uint64 inside a map",
+			query: "o.spec.counts",
+			want: map[string]string{
+				"replicas": "3",
+				"ready":    "2",
+				"tier":     "web",
+			},
+		},
+		{
+			name:  "int64 inside a list",
+			query: "o.spec.list",
+			want: map[string]string{
+				"list#0": "7",
+				"list#1": "x",
+			},
+		},
+		{
+			name:  "int64 on its own",
+			query: "o.spec.counts.replicas",
+			want: map[string]string{
+				"o.spec.counts.replicas": "3",
+			},
+		},
+	}
+
+	cr := NewCELResolver(klog.NewKlogr(), 10e5, 5*time.Second, nil, "test-ns", "test-rmm", "test-family")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := cr.Resolve(tt.query, obj); !cmp.Equal(got, tt.want) {
+				t.Errorf("%s", cmp.Diff(got, tt.want))
+			}
+		})
+	}
+}
