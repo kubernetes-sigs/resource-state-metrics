@@ -1,3 +1,5 @@
+### The project is slowing down development until more maintainers are recruited, see [#125](https://github.com/kubernetes-sigs/resource-state-metrics/issues/125) for details.
+***
 # `resource-state-metrics`
 
 [![CI](https://github.com/kubernetes-sigs/resource-state-metrics/actions/workflows/validations.yaml/badge.svg)](https://github.com/kubernetes-sigs/resource-state-metrics/actions/workflows/validations.yaml) [![Go Reference](https://pkg.go.dev/badge/github.com/kubernetes-sigs/resource-state-metrics.svg)](https://pkg.go.dev/github.com/kubernetes-sigs/resource-state-metrics)
