@@ -5,7 +5,7 @@
 | **Authors**   | @emmayusufu                                                         |
 | **Status**    | provisional                                                         |
 | **Created**   | 2026-09-16                                                          |
-| **Updated**   | 2026-09-23                                                          |
+| **Updated**   | 2026-10-19                                                          |
 | **Reviewers** | @rexagod, @mrueg                                                    |
 | **Approvers** | TBD                                                                 |
 | **See also**  | https://github.com/kubernetes-sigs/resource-state-metrics/issues/15 |
@@ -77,7 +77,7 @@ This proposal introduces two interfaces:
 
 The proposal also moves the shared behaviour into the resolver contracts instead of relying on conventions spread across `pkg/resolver` and `internal/`.
 
-The main goals are to make resolver results typed, make failures explicit, document resolver capabilities, and make it easier to add another resolver without having to discover all of these conventions from the existing implementation.
+The main goals are to make resolver results typed, make failures explicit, document resolver capabilities, and make it easier to change one of the three resolvers without rediscovering these conventions from the other two.
 
 The existing `ResourceMetricsMonitor` behaviour should remain unchanged. Existing configurations should produce the same metric output before and after the migration.
 
@@ -109,7 +109,7 @@ func (sr *StarlarkResolver) Resolve(obj map[string]interface{}) ([]ResolvedFamil
 
 in [`starlark.go:89`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L89), and there is no interface assertion. I confirmed that with a type assertion in a test.
 
-The wrapper therefore has a separate Starlark path, `f.starlarkResolver.Resolve` at [`family.go:230`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L230) against `resolverInstance.Resolve` at [`family.go:299`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L299) and [`family.go:334`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L334). A new resolver author has to understand this distinction before deciding which pattern to follow.
+The wrapper therefore has a separate Starlark path, `f.starlarkResolver.Resolve` at [`family.go:230`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L230) against `resolverInstance.Resolve` at [`family.go:299`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L299) and [`family.go:334`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L334). Anyone changing one of the resolvers has to understand this distinction before deciding which pattern to follow.
 
 ### Inputs are different
 
@@ -234,14 +234,14 @@ I have not added a failing test for this yet, so I am treating it as a candidate
 - Return lists and maps as actual lists and maps rather than encoded strings.
 - Make resolver failures explicit.
 - Give each resolver a way to declare its capabilities and limits.
-- Make it easier to add another resolver.
+- Make it easier to change one resolver without breaking agreement with the other two.
 - Keep existing `ResourceMetricsMonitor` output unchanged.
 
 ### Non-Goals
 
 - Changing the `ResourceMetricsMonitor` API.
 - Changing any CRD fields.
-- Adding another resolver as part of this proposal.
+- Adding a fourth resolver. The beta deliverables on the KEP ([kubernetes/enhancements#4785](https://github.com/kubernetes/enhancements/issues/4785#issuecomment-6257068261)) settle on the three that exist.
 - Changing emitted values for existing configurations, with one documented exception, missing label fields no longer carry the expression text as their value.
 - Doing performance work inside the resolvers.
 - Standardising every difference between CEL and Starlark immediately.
@@ -308,7 +308,7 @@ The equivalent functions in CEL and Starlark should have documented behaviour, a
 - `labelPrefix` in CEL and `label_prefix` in Starlark. Same job, different name.
 - `unixSeconds` and `now` in CEL have no Starlark equivalent. Starlark gets the whole `time` module instead ([`starlark.go:133`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L133)), with `time.now()`, `time.parse_time()` and friends, which is a different and larger surface.
 
-So the shared table covers the first two pairs from the start, with the edge cases written down. The empty quantity is the known one. CEL's `quantity("")` returns `0` ([`cel.go:244`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L244)) and Starlark's `quantity_to_float("")` returns an error ([`starlark.go:175`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L175)). Converging them changes CEL output, so that row carries a per resolver expected value, and picking the single rule gets its own tracking issue, the same way the two sanitizers do (#115). For time, the proposal is to add `unix_seconds(s)` and `now()` built ins to Starlark that mirror the CEL functions, and keep the `time` module as it is, so the time rows can run against both. The names differ per DSL because each follows its own naming convention, the table maps them.
+So the shared table covers the first two pairs from the start, with the edge cases written down. The empty quantity is the known one. CEL's `quantity("")` returns `0` ([`cel.go:244`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel.go#L244)) and Starlark's `quantity_to_float("")` returns an error ([`starlark.go:175`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/starlark.go#L175)). Converging them changes CEL output, so that row carries a per resolver expected value, and picking the single rule gets its own tracking issue, the same way the two sanitizers do (#115). For time there are no shared rows. `unixSeconds` and `now` stay covered in CEL's own tests ([`cel_test.go:174`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel_test.go#L174), [`cel_test.go:279`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/pkg/resolver/cel_test.go#L279)). Starlark already has the `time` module, and the beta deliverables on the KEP ([kubernetes/enhancements#4785](https://github.com/kubernetes/enhancements/issues/4785#issuecomment-6257068261)) say custom resolver functions are not maintained in RSM by default, so no Starlark built ins are added for this. If the KEP later removes the existing helpers, their rows go with them.
 
 ### Shared tests
 
@@ -329,7 +329,7 @@ The table can cover:
 
 Each resolver then runs the same cases where the behaviour is expected to be shared.
 
-This also gives a new resolver a clear way to demonstrate that it implements the contract.
+This also gives each resolver a clear way to demonstrate that it implements the contract.
 
 ### Wrapper changes
 
@@ -371,11 +371,11 @@ With the new contract, each resolver's current formatting is pinned by the share
 
 #### Story 2
 
-A contributor wants to add another resolver.
+A contributor changes the behaviour of one resolver.
 
-Today they need to understand the existing interface, the list encoding, the wrapper's special cases, the sanitization behaviour, the timeout implementations and the resolver-specific metrics.
+Today they need to understand the existing interface, the list encoding, the wrapper's special cases, the sanitization behaviour, the timeout implementations and the resolver-specific metrics, and then check by hand that the other two resolvers still agree. #119 is the recent case, the CEL map path dropped whole numbers that its list path kept, and nothing shared caught it.
 
-With the new design, they implement one of the resolver contracts, define its traits and run the shared resolver tests.
+With the new design, they change the resolver, update its traits if they changed, and run the shared resolver tests, which show whether the other two still agree.
 
 ### Notes/Constraints/Caveats (Optional)
 
@@ -545,7 +545,7 @@ One PR per step, so each can be reviewed and merged on its own and nothing waits
 4. Move CEL to `Compile` and `Eval`, declaring the same traits plus `Lists` and `Maps`, folding in the environment caching from #89, with its `Resolve` kept as the deprecated wrapper.
 5. Move Starlark to `Compile` and `Eval`, building on the compile once change in #101, declaring its traits, sanitizer included, with the cancellation watcher that exits on return, and its `Resolve(obj)` kept as the deprecated wrapper.
 6. Move the wrapper to the typed results, with the golden fixtures for lists, maps, nested values, null, the missing label field, and one fixture per sanitizer path so both are pinned as they are today.
-7. The shared test table in `pkg/resolver`, covering the shared cases and the `quantity` and `labelPrefix` pairs, plus `unix_seconds` and `now` built ins for Starlark so the time rows run on both sides.
+7. The shared test table in `pkg/resolver`, covering the shared cases and the `quantity` and `labelPrefix` pairs, with no time rows, Starlark uses its `time` module instead.
 8. The resolver evaluation counter, the mixin alerts updated and the manifests regenerated, the old metric name kept as an alias for one release.
 9. One release later, remove the deprecated `Resolver` interface, the deprecated `Resolve` methods, and the metric alias.
 
@@ -606,10 +606,10 @@ It is implemented when every deliverable below has landed. Each line maps to one
 - Failures. `ErrInvalidExpression` and `ErrBudgetExceeded` exist, the `found` rules hold for every resolver, and a caller cancellation is returned as the context error and not counted.
 - Cancellation. Every resolve method takes a context, the shared timeout wrapper cancels it, CEL evaluates with `ContextEval` and `InterruptCheckFrequency`, the Starlark watcher exits when the script returns, and a timeout test exists per resolver.
 - Sanitization. `Traits.Sanitization` records which helper each resolver applies, both current paths are pinned by golden fixtures, and merging them into one rule is tracked as a follow up issue.
-- Helper functions. The shared test table covers `quantity` and `labelPrefix` on both DSLs with the edge cases written down, the empty quantity row carrying a per resolver value until its follow up issue picks one, and Starlark has `unix_seconds` and `now` so the time rows run on both.
+- Helper functions. The shared test table covers `quantity` and `labelPrefix` on both DSLs with the edge cases written down, the empty quantity row carrying a per resolver value until its follow up issue picks one, and no time rows. No new built ins are added.
 - Metrics. `resolver_evaluations_total` with a `resolver` label replaces `cel_evaluations_total`, the mixin alerts query it, the manifests are regenerated, and the alias is removed one release later.
 - Output. The existing golden fixtures pass unchanged, and the new fixtures for lists, maps, nested values, null and the missing label field are in.
-- Tests. The shared test table runs in CI and is the documented way in for a fourth resolver.
+- Tests. The shared test table runs in CI and keeps the three resolvers in line.
 - Compatibility. The deprecated `Resolver` interface and `Resolve` methods stayed for one release and have been removed.
 
 ### Observability & operational impact
