@@ -22,7 +22,7 @@ CREATED_AT_EPOCH ?=
 GO ?= go
 GO_TOOL_MODFILE ?= go.tools.mod
 GO_TOOL_SUM = $(GO_TOOL_MODFILE:.mod=.sum)
-GO_TOOL_BINARIES = $(CHECKMAKE) $(YQ) $(JSONNET) $(JSONNETFMT) $(GOJSONTOYAML) $(MARKDOWNFMT) $(YAMLFMT) $(GOLANGCI_LINT) $(CONTROLLER_GEN) $(DEEPCOPY_GEN) $(CLIENT_GEN) $(LISTER_GEN) $(INFORMER_GEN) $(MDTOC)
+GO_TOOL_BINARIES = $(CHECKMAKE) $(YQ) $(JSONNET) $(JSONNETFMT) $(GOJSONTOYAML) $(MARKDOWNFMT) $(YAMLFMT) $(GOLANGCI_LINT) $(CONTROLLER_GEN) $(DEEPCOPY_GEN) $(CLIENT_GEN) $(LISTER_GEN) $(INFORMER_GEN) $(VALE) $(MDTOC)
 GOLANGCI_LINT_CONFIG ?= .golangci.yaml
 GOLDEN_FILES = $(shell find tests/golden -type f -name "*.yaml")
 GOLDEN_METRICS_FILE ?= tests/golden/metrics.txt
@@ -43,7 +43,6 @@ REGISTRY ?= us-central1-docker.pkg.dev/k8s-staging-images/resource-state-metrics
 TAG ?= $(BUILD_TAG)
 V ?= 4
 
-VALE_ARCH ?= $(if $(filter $(shell uname -m),arm64),macOS_arm64,Linux_64-bit)
 VALE_STYLES_DIR ?= /tmp/.vale/styles
 YAML_FILES = $(shell find . -type d -name vendor -prune -o -type d -name $(patsubst %/,%,$(patsubst ./%,%,$(ASSETS_DIR))) -prune -o \( -name "*.yaml" -o -name "*.yml" \) -print | grep -v "^./vendor" | grep -v "^./$(ASSETS_DIR)")
 
@@ -78,8 +77,6 @@ LISTER_GEN ?= $(LOCALBIN)/lister-gen
 INFORMER_GEN ?= $(LOCALBIN)/informer-gen
 VALE ?= $(LOCALBIN)/vale
 MDTOC ?= $(LOCALBIN)/mdtoc
-
-VALE_VERSION ?= 3.1.0
 
 BRANCH = $(shell git rev-parse --abbrev-ref HEAD)
 BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
@@ -158,13 +155,6 @@ $(GO_TOOL_BINARIES) &: $(GO_TOOL_MODFILE) $(GO_TOOL_SUM) | $(LOCALBIN)
 
 .PHONY: vale
 vale: $(VALE) ## Download vale locally if necessary.
-$(VALE): $(LOCALBIN)
-	@# Setup vale.
-	@if [ ! -f $(VALE) ]; then wget https://github.com/errata-ai/vale/releases/download/v$(VALE_VERSION)/vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz && \
-    tar -xvzf vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz -C $(LOCALBIN) && \
-    rm vale_$(VALE_VERSION)_$(VALE_ARCH).tar.gz && \
-    chmod +x $(VALE); \
-	fi
 
 ##@ Generating
 
