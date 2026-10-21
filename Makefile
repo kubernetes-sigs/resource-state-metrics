@@ -20,6 +20,9 @@ CONTROLLER_GEN_OUT_DIR ?= /tmp/resource-state-metrics/controller-gen
 PKG = github.com/kubernetes-sigs/resource-state-metrics
 CREATED_AT_EPOCH ?=
 GO ?= go
+GO_TOOL_MODFILE ?= go.tools.mod
+GO_TOOL_SUM = $(GO_TOOL_MODFILE:.mod=.sum)
+GO_TOOL_BINARIES = $(CHECKMAKE) $(YQ) $(JSONNET) $(JSONNETFMT) $(GOJSONTOYAML) $(MARKDOWNFMT) $(YAMLFMT) $(GOLANGCI_LINT) $(CONTROLLER_GEN) $(DEEPCOPY_GEN) $(CLIENT_GEN) $(LISTER_GEN) $(INFORMER_GEN) $(MDTOC)
 GOLANGCI_LINT_CONFIG ?= .golangci.yaml
 GOLDEN_FILES = $(shell find tests/golden -type f -name "*.yaml")
 GOLDEN_METRICS_FILE ?= tests/golden/metrics.txt
@@ -76,19 +79,7 @@ INFORMER_GEN ?= $(LOCALBIN)/informer-gen
 VALE ?= $(LOCALBIN)/vale
 MDTOC ?= $(LOCALBIN)/mdtoc
 
-## Tool Versions
-CHECKMAKE_VERSION ?= v0.3.2
-YQ_VERSION ?= v4.52.4
-JSONNET_VERSION ?= v0.21.0
-JSONNETFMT_VERSION ?= v0.21.0
-GOJSONTOYAML_VERSION ?= v0.1.0
-MARKDOWNFMT_VERSION ?= v3.1.0
-YAMLFMT_VERSION ?= v0.16.0
-GOLANGCI_LINT_VERSION ?= v2.10.1
-CONTROLLER_GEN_VERSION ?= v0.16.5
-CODE_GENERATOR_VERSION ?= v0.36.2
 VALE_VERSION ?= 3.1.0
-MDTOC_VERSION ?= v1.4.0
 
 BRANCH = $(shell git rev-parse --abbrev-ref HEAD)
 BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
@@ -122,73 +113,48 @@ setup-pre-commit: ## Setup pre-commit hooks and commit message template.
 
 .PHONY: checkmake
 checkmake: $(CHECKMAKE) ## Download checkmake locally if necessary.
-$(CHECKMAKE): $(LOCALBIN)
-	$(call go-install-tool,$(CHECKMAKE),github.com/checkmake/checkmake/cmd/checkmake,$(CHECKMAKE_VERSION))
 
 .PHONY: yq
 yq: $(YQ) ## Download yq locally if necessary.
-$(YQ): $(LOCALBIN)
-	$(call go-install-tool,$(YQ),github.com/mikefarah/yq/v4,$(YQ_VERSION))
 
 .PHONY: jsonnet
 jsonnet: $(JSONNET) ## Download jsonnet locally if necessary.
-$(JSONNET): $(LOCALBIN)
-	$(call go-install-tool,$(JSONNET),github.com/google/go-jsonnet/cmd/jsonnet,$(JSONNET_VERSION))
 
 .PHONY: jsonnetfmt
 jsonnetfmt: $(JSONNETFMT) ## Download jsonnetfmt locally if necessary.
-$(JSONNETFMT): $(LOCALBIN)
-	$(call go-install-tool,$(JSONNETFMT),github.com/google/go-jsonnet/cmd/jsonnetfmt,$(JSONNETFMT_VERSION))
 
 .PHONY: gojsontoyaml
 gojsontoyaml: $(GOJSONTOYAML) ## Download gojsontoyaml locally if necessary.
-$(GOJSONTOYAML): $(LOCALBIN)
-	$(call go-install-tool,$(GOJSONTOYAML),github.com/brancz/gojsontoyaml,$(GOJSONTOYAML_VERSION))
 
 .PHONY: markdownfmt
 markdownfmt: $(MARKDOWNFMT) ## Download markdownfmt locally if necessary.
-$(MARKDOWNFMT): $(LOCALBIN)
-	$(call go-install-tool,$(MARKDOWNFMT),github.com/Kunde21/markdownfmt/v3/cmd/markdownfmt,$(MARKDOWNFMT_VERSION))
 
 .PHONY: yamlfmt
 yamlfmt: $(YAMLFMT) ## Download yamlfmt locally if necessary.
-$(YAMLFMT): $(LOCALBIN)
-	$(call go-install-tool,$(YAMLFMT),github.com/google/yamlfmt/cmd/yamlfmt,$(YAMLFMT_VERSION))
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
-$(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
 .PHONY: controller-gen
 controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
-$(CONTROLLER_GEN): $(LOCALBIN)
-	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_GEN_VERSION))
 
 .PHONY: deepcopy-gen
 deepcopy-gen: $(DEEPCOPY_GEN) ## Download deepcopy-gen locally if necessary.
-$(DEEPCOPY_GEN): $(LOCALBIN)
-	$(call go-install-tool,$(DEEPCOPY_GEN),k8s.io/code-generator/cmd/deepcopy-gen,$(CODE_GENERATOR_VERSION))
 
 .PHONY: client-gen
 client-gen: $(CLIENT_GEN) ## Download client-gen locally if necessary.
-$(CLIENT_GEN): $(LOCALBIN)
-	$(call go-install-tool,$(CLIENT_GEN),k8s.io/code-generator/cmd/client-gen,$(CODE_GENERATOR_VERSION))
 
 .PHONY: lister-gen
 lister-gen: $(LISTER_GEN) ## Download lister-gen locally if necessary.
-$(LISTER_GEN): $(LOCALBIN)
-	$(call go-install-tool,$(LISTER_GEN),k8s.io/code-generator/cmd/lister-gen,$(CODE_GENERATOR_VERSION))
 
 .PHONY: informer-gen
 informer-gen: $(INFORMER_GEN) ## Download informer-gen locally if necessary.
-$(INFORMER_GEN): $(LOCALBIN)
-	$(call go-install-tool,$(INFORMER_GEN),k8s.io/code-generator/cmd/informer-gen,$(CODE_GENERATOR_VERSION))
 
 .PHONY: mdtoc
 mdtoc: $(MDTOC) ## Download mdtoc locally if necessary.
-$(MDTOC): $(LOCALBIN)
-	$(call go-install-tool,$(MDTOC),sigs.k8s.io/mdtoc,$(MDTOC_VERSION))
+
+$(GO_TOOL_BINARIES) &: $(GO_TOOL_MODFILE) $(GO_TOOL_SUM) | $(LOCALBIN)
+	GOBIN=$(LOCALBIN) $(GO) install -modfile=$(GO_TOOL_MODFILE) tool
 
 .PHONY: vale
 vale: $(VALE) ## Download vale locally if necessary.
@@ -250,7 +216,7 @@ codegen: $(DEEPCOPY_GEN) $(CLIENT_GEN) $(LISTER_GEN) $(INFORMER_GEN) ## Generate
 
 .PHONY: jsonnet_manifests
 jsonnet_manifests: $(JSONNET) $(GOJSONTOYAML) $(YQ) manifests ## Generate manifests from jsonnet files.
-	@CONTROLLER_GEN_VERSION=$(CONTROLLER_GEN_VERSION) VERSION=$(VERSION) NAMESPACE=$(LOCAL_NAMESPACE) PROJECT_NAME=$(PROJECT_NAME) JSONNET=$(JSONNET) GOJSONTOYAML=$(GOJSONTOYAML) YQ=$(YQ) ./hack/generate-yamls-from-jsonnets.sh
+	@VERSION=$(VERSION) NAMESPACE=$(LOCAL_NAMESPACE) PROJECT_NAME=$(PROJECT_NAME) JSONNET=$(JSONNET) GOJSONTOYAML=$(GOJSONTOYAML) YQ=$(YQ) ./hack/generate-yamls-from-jsonnets.sh
 
 .PHONY: table_of_contents
 table_of_contents: $(MDTOC) $(PROPOSAL_FILES) ## Generate table of contents Markdown files.
@@ -450,20 +416,3 @@ lint_jsonnet_fix: $(JSONNETFMT) licensecheck_jsonnet_fix ## Lint and fix Jsonnet
 .PHONY: clean
 clean: ## Clean up git untracked files and directories.
 	@git clean -fxd
-
-
-# go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
-# $1 - target path with name of binary
-# $2 - package url which can be installed
-# $3 - specific version of package
-define go-install-tool
-@[ -f "$(1)-$(3)" ] && [ "$$(readlink -- "$(1)" 2>/dev/null)" = "$(1)-$(3)" ] || { \
-set -e; \
-package=$(2)@$(3) ;\
-echo "Downloading $${package}" ;\
-rm -f $(1) ;\
-GOBIN=$(LOCALBIN) go install $${package} ;\
-mv $(1) $(1)-$(3) ;\
-} ;\
-ln -sf $$(realpath $(1)-$(3)) $(1)
-endef
