@@ -101,12 +101,9 @@ Run from the repository root.
 - Conventional commit headers are required by hooks/CI (`build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test`).
 
 ## Known environment issues and workarounds encountered during initial setup
-1. `make setup` may fail at pre-commit hook installation when git has `core.hooksPath` configured:
+1. `make setup-pre-commit` may fail at pre-commit hook installation when git has `core.hooksPath` configured:
    - Error: `Cowardly refusing to install hooks with core.hooksPath set.`
-   - Workaround: run `git config --unset-all core.hooksPath` before `make setup`, or skip hook installation if only ephemeral CI-style checks are needed.
-2. `make lint` may fail with `/bin/bash: line 1: Makefile: command not found` when `checkmake` is installed but not on `PATH`.
-   - Workaround: prepend Go bin directory before linting:
-   - `export PATH="$(go env GOPATH)/bin:$PATH"`
+   - Workaround: run `git config --unset-all core.hooksPath` before `make setup-pre-commit`, or skip hook installation if only ephemeral CI-style checks are needed.
 
 ## High-signal files to inspect for most changes
 - `main.go`

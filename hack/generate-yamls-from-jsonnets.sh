@@ -17,7 +17,6 @@
 set -euo pipefail
 
 BOILERPLATE="hack/boilerplate.yaml.txt"
-CONTROLLER_GEN_VERSION="${CONTROLLER_GEN_VERSION:-v0.16.5}"
 GOJSONTOYAML="${GOJSONTOYAML:-gojsontoyaml}"
 JSONNET="${JSONNET:-jsonnet}"
 NAMESPACE="${NAMESPACE:-default}"
