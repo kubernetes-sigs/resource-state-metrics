@@ -1,6 +1,8 @@
 ---
-
-## name: Bug report about: Report a bug in resource-state-metrics labels: kind/bug
+name: Bug report
+about: Report a bug in resource-state-metrics
+labels: kind/bug
+---
 
 ## What happened?
 
