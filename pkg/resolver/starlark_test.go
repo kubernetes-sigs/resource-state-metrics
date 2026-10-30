@@ -867,3 +867,28 @@ families = [family(name="test", help="test", kind="gauge", samples=samples)]
 		})
 	}
 }
+
+func TestStarlarkResolver_QuantityInvalid(t *testing.T) {
+	t.Parallel()
+
+	script := `
+samples = [metric(labels={}, value=quantity_to_float(obj["spec"]["value"]))]
+families = [family(name="test", help="test", kind="gauge", samples=samples)]
+`
+	obj := map[string]interface{}{
+		"spec": map[string]interface{}{
+			"value": "not-a-quantity",
+		},
+	}
+
+	resolver := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
+
+	_, err := resolver.Resolve(obj)
+	if err == nil {
+		t.Fatal("expected error for invalid quantity, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "invalid quantity") && !strings.Contains(err.Error(), "quantity") {
+		t.Fatalf("error = %q, want quantity-related failure", err)
+	}
+}
