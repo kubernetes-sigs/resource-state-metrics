@@ -1,6 +1,8 @@
 ---
-
-## name: Feature request about: Suggest a new feature or improvement labels: kind/feature
+name: Feature request
+about: Suggest a new feature or improvement
+labels: kind/feature
+---
 
 ## What problem does this solve?
 
