@@ -16,7 +16,7 @@ name: release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 permissions:
   contents: write
 jobs:
@@ -32,7 +32,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Build binary
-        run: make resource-state-metrics
+        run: make build
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }} # TODO
