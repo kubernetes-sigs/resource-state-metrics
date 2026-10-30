@@ -798,3 +798,97 @@ families = [family(name="test", help="test", kind="gauge", samples=samples)]
 		t.Errorf("expected 3 samples (deduplicated set), got %d", len(families[0].Samples))
 	}
 }
+
+func TestStarlarkResolver_LabelPrefix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		script string
+		obj    map[string]interface{}
+		want   map[string]string
+	}{
+		{
+			name: "prefix and sanitize labels",
+			script: `
+prefixed = label_prefix(obj["metadata"]["labels"], "label_")
+samples = [metric(labels=prefixed, value=1.0)]
+families = [family(name="test", help="test", kind="gauge", samples=samples)]
+`,
+			obj: map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"labels": map[string]interface{}{
+						"app":                    "test",
+						"app.kubernetes.io/name": "myapp",
+						"env/type":               "prod",
+					},
+				},
+			},
+			want: map[string]string{
+				"label_app":                    "test",
+				"label_app_kubernetes_io_name": "myapp",
+				"label_env_type":               "prod",
+			},
+		},
+		{
+			name: "empty labels",
+			script: `
+prefixed = label_prefix(obj["metadata"]["labels"], "label_")
+samples = [metric(labels=prefixed, value=1.0)]
+families = [family(name="test", help="test", kind="gauge", samples=samples)]
+`,
+			obj: map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"labels": map[string]interface{}{},
+				},
+			},
+			want: map[string]string{},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			resolver := NewStarlarkResolver(klog.NewKlogr(), testCase.script, 5*time.Second, 100000)
+
+			families, err := resolver.Resolve(testCase.obj)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(families) != 1 || len(families[0].Samples) != 1 {
+				t.Fatalf("expected 1 family with 1 sample, got %+v", families)
+			}
+
+			if diff := cmp.Diff(testCase.want, families[0].Samples[0].Labels); diff != "" {
+				t.Fatalf("labels mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestStarlarkResolver_QuantityInvalid(t *testing.T) {
+	t.Parallel()
+
+	script := `
+samples = [metric(labels={}, value=quantity_to_float(obj["spec"]["value"]))]
+families = [family(name="test", help="test", kind="gauge", samples=samples)]
+`
+	obj := map[string]interface{}{
+		"spec": map[string]interface{}{
+			"value": "not-a-quantity",
+		},
+	}
+
+	resolver := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
+
+	_, err := resolver.Resolve(obj)
+	if err == nil {
+		t.Fatal("expected error for invalid quantity, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "invalid quantity") && !strings.Contains(err.Error(), "quantity") {
+		t.Fatalf("error = %q, want quantity-related failure", err)
+	}
+}
