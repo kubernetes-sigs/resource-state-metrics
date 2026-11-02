@@ -105,4 +105,19 @@ spec:
                         type: string
                     required: ["type", "status"]
               required: ["appId", "language", "environmentType"]
+            status:
+              type: object
+              properties:
+                replicas:
+                  type: integer
+                readyReplicas:
+                  type: integer
+                updatedReplicas:
+                  type: integer
+                availableReplicas:
+                  type: integer
+                activeZones:
+                  type: array
+                  items:
+                    type: string
           required: ["spec"]

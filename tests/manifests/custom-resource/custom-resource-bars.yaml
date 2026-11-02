@@ -60,3 +60,11 @@ spec:
     compositeMap:
       key1: "value1"
       key2: "value2"
+status:
+  replicas: 4
+  readyReplicas: 3
+  updatedReplicas: 4
+  availableReplicas: 3
+  activeZones:
+    - us-east-1a
+    - us-east-1b
