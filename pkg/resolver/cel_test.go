@@ -420,3 +420,74 @@ func TestCELResolver_MapScalarTypes(t *testing.T) {
 		})
 	}
 }
+
+func TestCELResolver_ListAndMapExpansion(t *testing.T) {
+	t.Parallel()
+
+	obj := map[string]interface{}{
+		"spec": map[string]interface{}{
+			"conditions": []interface{}{
+				map[string]interface{}{"type": "Ready", "status": "True"},
+			},
+			"vals":  []interface{}{nil, "a"},
+			"holes": map[string]interface{}{"a": nil, "b": "y"},
+			"bag": map[string]interface{}{
+				"items": []interface{}{"p", "q"},
+			},
+		},
+	}
+	tests := []struct {
+		name  string
+		query string
+		want  map[string]string
+	}{
+		{
+			name:  "map call returns a CEL list",
+			query: "o.spec.conditions.map(c, c.type)",
+			want: map[string]string{
+				"conditions#0": "Ready",
+			},
+		},
+		{
+			name:  "chained filter and map keep the iterated field as prefix",
+			query: `o.spec.conditions.filter(c, c.status == "True").map(c, c.type)`,
+			want: map[string]string{
+				"conditions#0": "Ready",
+			},
+		},
+		{
+			name:  "nil inside a list is dropped by the unsupported arm",
+			query: "o.spec.vals",
+			want: map[string]string{
+				"vals#1": "a",
+			},
+		},
+		{
+			name:  "nil inside a map is dropped by the unsupported arm",
+			query: "o.spec.holes",
+			want: map[string]string{
+				"b": "y",
+			},
+		},
+		{
+			name:  "list inside a map",
+			query: "o.spec.bag",
+			want: map[string]string{
+				"items#0": "p",
+				"items#1": "q",
+			},
+		},
+	}
+
+	cr := NewCELResolver(klog.NewKlogr(), 10e5, 5*time.Second, nil, "test-ns", "test-rmm", "test-family")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := cr.Resolve(tt.query, obj); !cmp.Equal(got, tt.want) {
+				t.Errorf("%s", cmp.Diff(got, tt.want))
+			}
+		})
+	}
+}
