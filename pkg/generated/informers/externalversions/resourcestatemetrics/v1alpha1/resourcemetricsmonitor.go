@@ -34,11 +34,39 @@ import (
 )
 
 // ResourceMetricsMonitorInformer provides access to a shared informer and lister for
-// ResourceMetricsMonitors.
+// ResourceMetricsMonitors. Prefer using the type-safe variant (see [TypedResourceMetricsMonitorInformer]).
 type ResourceMetricsMonitorInformer interface {
 	Informer() cache.SharedIndexInformer
 	Lister() resourcestatemetricsv1alpha1.ResourceMetricsMonitorLister
 }
+
+// TypedResourceMetricsMonitorInformer provides access to a shared informer and lister for
+// ResourceMetricsMonitors, including the type-safe TypedInformer variant.
+// It is a superset of ResourceMetricsMonitorInformer.
+type TypedResourceMetricsMonitorInformer interface {
+	Informer() cache.SharedIndexInformer
+	TypedInformer() ResourceMetricsMonitorIndexInformer
+	Lister() resourcestatemetricsv1alpha1.ResourceMetricsMonitorLister
+}
+
+// ResourceMetricsMonitorIndexInformer is a wrapper around the underlying [cache.SharedIndexInformer]
+// with type-safe variants of several methods.
+type ResourceMetricsMonitorIndexInformer cache.TypedSharedIndexInformer[*apisresourcestatemetricsv1alpha1.ResourceMetricsMonitor]
+
+// ResourceMetricsMonitorHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerFuncs] for ResourceMetricsMonitor.
+type ResourceMetricsMonitorHandlerFuncs = cache.TypedResourceEventHandlerFuncs[*apisresourcestatemetricsv1alpha1.ResourceMetricsMonitor]
+
+// ResourceMetricsMonitorDetailedHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerDetailedFuncs] for ResourceMetricsMonitor.
+type ResourceMetricsMonitorDetailedHandlerFuncs = cache.TypedResourceEventHandlerDetailedFuncs[*apisresourcestatemetricsv1alpha1.ResourceMetricsMonitor]
+
+// ResourceMetricsMonitorFilteringHandler is a specialization of [cache.TypedFilteringResourceEventHandler] for ResourceMetricsMonitor.
+type ResourceMetricsMonitorFilteringHandler = cache.TypedFilteringResourceEventHandler[*apisresourcestatemetricsv1alpha1.ResourceMetricsMonitor]
+
+// ResourceMetricsMonitorIndexers is a specialization of [cache.TypedIndexers] for ResourceMetricsMonitor.
+type ResourceMetricsMonitorIndexers = cache.TypedIndexers[*apisresourcestatemetricsv1alpha1.ResourceMetricsMonitor]
+
+// DeletedResourceMetricsMonitor is a specialization of [cache.DeletedObject] for ResourceMetricsMonitor.
+type DeletedResourceMetricsMonitor = cache.DeletedObject[*apisresourcestatemetricsv1alpha1.ResourceMetricsMonitor]
 
 type resourceMetricsMonitorInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
@@ -49,25 +77,49 @@ type resourceMetricsMonitorInformer struct {
 // NewResourceMetricsMonitorInformer constructs a new informer for ResourceMetricsMonitor type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedResourceMetricsMonitorInformer]).
 func NewResourceMetricsMonitorInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
 	return NewResourceMetricsMonitorInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
+}
+
+// NewTypedResourceMetricsMonitorInformer constructs a new informer for ResourceMetricsMonitor type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedResourceMetricsMonitorInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers ResourceMetricsMonitorIndexers) ResourceMetricsMonitorIndexInformer {
+	return NewTypedResourceMetricsMonitorInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers)})
 }
 
 // NewFilteredResourceMetricsMonitorInformer constructs a new informer for ResourceMetricsMonitor type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedFilteredResourceMetricsMonitorInformer]).
 func NewFilteredResourceMetricsMonitorInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
-	return NewResourceMetricsMonitorInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+	return NewTypedResourceMetricsMonitorInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+}
+
+// NewTypedFilteredResourceMetricsMonitorInformer constructs a new informer for ResourceMetricsMonitor type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedFilteredResourceMetricsMonitorInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers ResourceMetricsMonitorIndexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) ResourceMetricsMonitorIndexInformer {
+	return NewTypedResourceMetricsMonitorInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers), TweakListOptions: tweakListOptions})
 }
 
 // NewResourceMetricsMonitorInformerWithOptions constructs a new informer for ResourceMetricsMonitor type with additional options.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedResourceMetricsMonitorInformerWithOptions]).
 func NewResourceMetricsMonitorInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
+	return NewTypedResourceMetricsMonitorInformerWithOptions(client, namespace, options)
+}
+
+// NewTypedResourceMetricsMonitorInformerWithOptions constructs a new informer for ResourceMetricsMonitor type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedResourceMetricsMonitorInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) ResourceMetricsMonitorIndexInformer {
 	gvr := schema.GroupVersionResource{Group: "resource-state-metrics.instrumentation.k8s-sigs.io", Version: "v1alpha1", Resource: "resourcemetricsmonitors"}
 	identifier := options.InformerName.WithResource(gvr)
 	tweakListOptions := options.TweakListOptions
-	return cache.NewSharedIndexInformerWithOptions(
+	return cache.NewTypedSharedIndexInformer[*apisresourcestatemetricsv1alpha1.ResourceMetricsMonitor](cache.NewSharedIndexInformerWithOptions(
 		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
 			ListFunc: func(opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
@@ -100,17 +152,57 @@ func NewResourceMetricsMonitorInformerWithOptions(client versioned.Interface, na
 			Indexers:     options.Indexers,
 			Identifier:   identifier,
 		},
-	)
+	))
 }
 
 func (f *resourceMetricsMonitorInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewResourceMetricsMonitorInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
+	return NewTypedResourceMetricsMonitorInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
 }
 
 func (f *resourceMetricsMonitorInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apisresourcestatemetricsv1alpha1.ResourceMetricsMonitor{}, f.defaultInformer)
+	return f.TypedInformer()
+}
+
+func (f *resourceMetricsMonitorInformer) TypedInformer() ResourceMetricsMonitorIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apisresourcestatemetricsv1alpha1.ResourceMetricsMonitor](f.factory.InformerFor(&apisresourcestatemetricsv1alpha1.ResourceMetricsMonitor{}, f.defaultInformer))
 }
 
 func (f *resourceMetricsMonitorInformer) Lister() resourcestatemetricsv1alpha1.ResourceMetricsMonitorLister {
 	return resourcestatemetricsv1alpha1.NewResourceMetricsMonitorLister(f.Informer().GetIndexer())
+}
+
+// ToTypedResourceMetricsMonitorInformer converts an untyped informer into a TypedResourceMetricsMonitorInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *ResourceMetricsMonitor. If that is not the case, calling type-safe methods of the returned
+// TypedResourceMetricsMonitorInformer leads to runtime panics. A safer alternative is to pass
+// around a TypedResourceMetricsMonitorInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToTypedResourceMetricsMonitorInformer(informer ResourceMetricsMonitorInformer) TypedResourceMetricsMonitorInformer {
+	if informer, ok := informer.(TypedResourceMetricsMonitorInformer); ok {
+		return informer
+	}
+	return &resourceMetricsMonitorTypedInformerAdapter{informer}
+}
+
+type resourceMetricsMonitorTypedInformerAdapter struct {
+	ResourceMetricsMonitorInformer
+}
+
+func (a *resourceMetricsMonitorTypedInformerAdapter) TypedInformer() ResourceMetricsMonitorIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apisresourcestatemetricsv1alpha1.ResourceMetricsMonitor](a.Informer())
+}
+
+// ToResourceMetricsMonitorIndexInformer converts an untyped informer into a ResourceMetricsMonitorIndexInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *ResourceMetricsMonitor. If that is not the case, calling type-safe methods of the returned
+// ResourceMetricsMonitorIndexInformer leads to runtime panics. A safer alternative is to pass
+// around a ResourceMetricsMonitorIndexInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToResourceMetricsMonitorIndexInformer(informer cache.SharedIndexInformer) ResourceMetricsMonitorIndexInformer {
+	if informer, ok := informer.(ResourceMetricsMonitorIndexInformer); ok {
+		return informer
+	}
+	return cache.NewTypedSharedIndexInformer[*apisresourcestatemetricsv1alpha1.ResourceMetricsMonitor](informer)
 }
