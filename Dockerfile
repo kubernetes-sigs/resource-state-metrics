@@ -6,7 +6,7 @@
 # they are empty, e.g. with the legacy builder (BuildKit disabled), which then
 # builds linux/amd64 for both the binary and the base image.
 ARG BUILDPLATFORM
-FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.26 AS builder
+FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.27 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
