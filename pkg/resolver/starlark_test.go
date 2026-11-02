@@ -798,3 +798,148 @@ families = [family(name="test", help="test", kind="gauge", samples=samples)]
 		t.Errorf("expected 3 samples (deduplicated set), got %d", len(families[0].Samples))
 	}
 }
+
+func TestStarlarkResolver_LabelPrefixErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		call        string
+		expectedErr string
+	}{
+		{
+			name:        "non-string key",
+			call:        `label_prefix({1: "a"}, "p_")`,
+			expectedErr: "label key must be a string, got int",
+		},
+		{
+			name:        "labels is not a dict",
+			call:        `label_prefix("nope", "p_")`,
+			expectedErr: "want dict",
+		},
+		{
+			name:        "prefix missing",
+			call:        `label_prefix({"a": "b"})`,
+			expectedErr: "missing argument",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			script := "labels = " + testCase.call + "\nfamilies = []\n"
+			sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
+
+			_, err := sg.Resolve(map[string]interface{}{})
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+
+			if !strings.Contains(err.Error(), testCase.expectedErr) {
+				t.Errorf("error %q does not contain %q", err.Error(), testCase.expectedErr)
+			}
+		})
+	}
+}
+
+func TestStarlarkResolver_SampleValueTypes(t *testing.T) {
+	t.Parallel()
+
+	// metric() only accepts a float value, so the int arm of extractFloat is
+	// reachable only through a sample dict built by hand.
+	script := `
+samples = [
+    {"labels": {"n": 1, "f": 1.5, "b": True, "l": [1, 2]}, "value": 3},
+]
+families = [
+    family(name="typed", help="Typed labels", kind="gauge", samples=samples)
+]
+`
+
+	sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
+
+	families, err := sg.Resolve(map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(families) != 1 || len(families[0].Samples) != 1 {
+		t.Fatalf("expected 1 family with 1 sample, got %+v", families)
+	}
+
+	sample := families[0].Samples[0]
+	if sample.Value != 3 {
+		t.Errorf("expected int value to resolve as 3, got %v", sample.Value)
+	}
+
+	want := map[string]string{
+		"n": "1",
+		"f": "1.5",
+		"b": "true",
+		"l": "[1, 2]",
+	}
+	if !cmp.Equal(sample.Labels, want) {
+		t.Errorf("%s", cmp.Diff(sample.Labels, want))
+	}
+}
+
+func TestStarlarkResolver_SampleExtractionErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		samples     string
+		expectedErr string
+	}{
+		{
+			name:        "sample is not a dict",
+			samples:     `["x"]`,
+			expectedErr: "sample must be a dict, got string",
+		},
+		{
+			name:        "labels missing",
+			samples:     `[{"value": 1.0}]`,
+			expectedErr: "sample missing 'labels' field",
+		},
+		{
+			name:        "value missing",
+			samples:     `[{"labels": {"a": "b"}}]`,
+			expectedErr: "sample missing 'value' field",
+		},
+		{
+			name:        "labels is not a dict",
+			samples:     `[{"labels": ["a"], "value": 1.0}]`,
+			expectedErr: "labels must be a dict, got list",
+		},
+		{
+			name:        "label key is not a string",
+			samples:     `[{"labels": {1: "a"}, "value": 1.0}]`,
+			expectedErr: "label key must be a string, got int",
+		},
+		{
+			name:        "value is not a number",
+			samples:     `[{"labels": {"a": "b"}, "value": "x"}]`,
+			expectedErr: "sample value: expected number, got string",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			script := "samples = " + testCase.samples + "\n" +
+				`families = [family(name="broken", help="Broken samples", kind="gauge", samples=samples)]` + "\n"
+			sg := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
+
+			_, err := sg.Resolve(map[string]interface{}{})
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+
+			if !strings.Contains(err.Error(), testCase.expectedErr) {
+				t.Errorf("error %q does not contain %q", err.Error(), testCase.expectedErr)
+			}
+		})
+	}
+}
