@@ -25,7 +25,7 @@ import (
 // Interface provides access to all the informers in this group version.
 type Interface interface {
 	// ResourceMetricsMonitors returns a ResourceMetricsMonitorInformer.
-	ResourceMetricsMonitors() ResourceMetricsMonitorInformer
+	ResourceMetricsMonitors() TypedResourceMetricsMonitorInformer
 }
 
 type version struct {
@@ -39,7 +39,7 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 	return &version{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
 }
 
-// ResourceMetricsMonitors returns a ResourceMetricsMonitorInformer.
-func (v *version) ResourceMetricsMonitors() ResourceMetricsMonitorInformer {
+// ResourceMetricsMonitors returns a TypedResourceMetricsMonitorInformer.
+func (v *version) ResourceMetricsMonitors() TypedResourceMetricsMonitorInformer {
 	return &resourceMetricsMonitorInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
