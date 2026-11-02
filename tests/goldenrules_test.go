@@ -315,6 +315,12 @@ func validateStatusOutput(ctx context.Context, t *testing.T, f *framework.Framew
 
 			lastDiff = cmp.Diff(goldenRule.Status, &rmm.Status, opts)
 			if lastDiff == "" {
+				if wantPerFamily := goldenRule.Status.Cardinality.PerFamily; len(wantPerFamily) > 0 {
+					if diff := cmp.Diff(wantPerFamily, rmm.Status.Cardinality.PerFamily); diff != "" {
+						t.Errorf("PerFamily mismatch (-expected +actual):\n%s", diff)
+					}
+				}
+
 				return
 			}
 		}
