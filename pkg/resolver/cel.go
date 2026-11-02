@@ -425,7 +425,7 @@ func (cr *CELResolver) resolveListInner(list []interface{}, out map[string]strin
 		case map[string]interface{}:
 			cr.resolveMapInner(v, out)
 		default:
-			cr.logger.V(1).Error(fmt.Errorf("encountered composite value %q at index %d, skipping", v, i), "ignoring resolution for query")
+			cr.logger.V(1).Error(fmt.Errorf("encountered composite value %v at index %d, skipping", v, i), "ignoring resolution for query")
 		}
 	}
 }
@@ -440,7 +440,7 @@ func (cr *CELResolver) resolveMapInner(m map[string]interface{}, out map[string]
 		case map[string]interface{}:
 			cr.resolveMapInner(v, out)
 		default:
-			cr.logger.V(1).Error(fmt.Errorf("encountered composite value %q at key %q, skipping", v, k), "ignoring resolution for query")
+			cr.logger.V(1).Error(fmt.Errorf("encountered composite value %v at key %q, skipping", v, k), "ignoring resolution for query")
 		}
 	}
 }
