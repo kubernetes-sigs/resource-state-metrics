@@ -43,7 +43,8 @@ MARKDOWNFMT ?= $(GOBIN)/markdownfmt
 MARKDOWNFMT_VERSION ?= v3.1.0
 MDTOC ?= $(GOBIN)/mdtoc
 MDTOC_VERSION ?= v1.4.0
-MD_FILES = $(shell find . \( -type d -name 'vendor' -o -type d -name $(patsubst %/,%,$(patsubst ./%,%,$(ASSETS_DIR))) \) -prune -o -type f -name "*.md" -print)
+# Exclude GitHub issue templates: markdownfmt does not preserve YAML frontmatter.
+MD_FILES = $(shell find . \( -type d -name 'vendor' -o -type d -name $(patsubst %/,%,$(patsubst ./%,%,$(ASSETS_DIR))) -o -type d -path './.github/ISSUE_TEMPLATE' \) -prune -o -type f -name "*.md" -print)
 PIPX ?= pipx
 PPROF_OPTIONS ?=
 PPROF_PORT ?= 9998
