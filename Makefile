@@ -254,8 +254,15 @@ delete_testdata:
 golden_metrics: $(GOLDEN_FILES)
 	@$(YQ) --no-doc '.metrics[]' $(GOLDEN_FILES) > $(GOLDEN_METRICS_FILE)
 
+# The cardinality conditions are written after every store has finished its
+# initial list, so their presence means the scrape is complete.
+.PHONY: wait_metrics
+wait_metrics:
+	@$(KUBECTL) wait resourcemetricsmonitors --all --timeout=180s \
+		--for=jsonpath='{.status.conditions[?(@.type=="CardinalityWarning")].status}'
+
 .PHONY: compare_metrics
-compare_metrics: golden_metrics
+compare_metrics: golden_metrics wait_metrics
 	@diff \
 		<(sort $(GOLDEN_METRICS_FILE)) \
 		<(curl -sf http://localhost:$(MAIN_METRICS_PORT)/metrics | grep -Ff $(GOLDEN_METRICS_FILE) | sort)
