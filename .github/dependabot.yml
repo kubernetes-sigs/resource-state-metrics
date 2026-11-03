@@ -27,7 +27,7 @@ updates:
       - dependency-name: "k8s.io/*"
       - dependency-name: "sigs.k8s.io/*"
       - dependency-name: "github.com/prometheus/*"
-      - dependency-name: "github.com/google/cel-go"
+      - dependency-name: "cel.dev/cel-go"
       - dependency-name: "go.starlark.net"
     groups:
       golang-x:
@@ -44,7 +44,7 @@ updates:
           - "github.com/prometheus/*"
       cel:
         patterns:
-          - "github.com/google/cel-go"
+          - "cel.dev/cel-go"
       starlark:
         patterns:
           - "go.starlark.net"
