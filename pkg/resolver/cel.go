@@ -24,9 +24,9 @@ import (
 	"time"
 
 	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/common/cost"
 	"cel.dev/cel-go/common/types"
 	"cel.dev/cel-go/common/types/ref"
-	"cel.dev/cel-go/interpreter"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/metricutil"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/options"
 	"github.com/prometheus/client_golang/prometheus"
@@ -70,7 +70,7 @@ func NewCELResolver(logger klog.Logger, costLimit uint64, timeout time.Duration,
 type costEstimator struct{}
 
 // costEstimator implements the ActualCostEstimator interface.
-var _ interpreter.ActualCostEstimator = costEstimator{}
+var _ cost.ActualCostEstimator = costEstimator{}
 
 // CEL cost budgets for custom functions. Higher values reflect more complex operations.
 const (
