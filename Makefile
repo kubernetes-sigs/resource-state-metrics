@@ -252,7 +252,7 @@ delete_testdata:
 
 .PHONY: golden_metrics
 golden_metrics: $(GOLDEN_FILES)
-	@$(YQ) --no-doc '.out.metrics[]' $(GOLDEN_FILES) > $(GOLDEN_METRICS_FILE)
+	@$(YQ) --no-doc '.metrics[]' $(GOLDEN_FILES) > $(GOLDEN_METRICS_FILE)
 
 .PHONY: compare_metrics
 compare_metrics: golden_metrics
