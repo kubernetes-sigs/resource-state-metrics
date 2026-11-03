@@ -11,3 +11,7 @@ tests/golden/metrics.txt
 # `bench` artefacts
 ./wget-log*
 
+
+# Local tooling and release artefacts
+/bin/
+/dist/

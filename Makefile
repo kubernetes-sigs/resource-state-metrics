@@ -1,10 +1,5 @@
 SHELL := /bin/bash
 
-ALL_ARCH ?= amd64 arm64
-# A literal comma cannot appear in a $(subst) call because Make parses it as
-# an argument separator before the function ever sees it.
-comma := ,
-DOCKER_BUILDX_CMD ?= docker buildx
 GOBIN ?= $(shell go env GOBIN)
 ifeq ($(GOBIN),)
 GOBIN = $(shell go env GOPATH)/bin
@@ -12,11 +7,9 @@ endif
 ASSETS_DIR ?= assets
 BOILERPLATE_GO_COMPLIANT ?= hack/boilerplate.go.txt
 BOILERPLATE_YAML_COMPLIANT ?= hack/boilerplate.yaml.txt
-BUILD_TAG ?= $(shell git describe --tags --exact-match 2>/dev/null || echo "latest")
 CHECKMAKE ?= $(GOBIN)/checkmake
 CHECKMAKE_VERSION ?= v0.3.2
 CODE_GENERATOR_VERSION ?= v0.32.3
-COMMON = github.com/prometheus/common
 CONTROLLER_GEN ?= $(GOBIN)/controller-gen
 CONTROLLER_GEN_APIS_DIR ?= pkg/apis
 CONTROLLER_GEN_OUT_DIR ?= /tmp/resource-state-metrics/controller-gen
@@ -25,6 +18,10 @@ CREATED_AT_EPOCH ?=
 GO ?= go
 GOJSONTOYAML ?= $(GOBIN)/gojsontoyaml
 GOJSONTOYAML_VERSION ?= v0.1.0
+GORELEASER_VERSION ?= v2.19.0
+LOCALBIN ?= $(CURDIR)/bin
+GORELEASER ?= $(LOCALBIN)/goreleaser-$(GORELEASER_VERSION)
+IMAGE_REPO ?= registry.k8s.io/resource-state-metrics/resource-state-metrics
 GOLANGCI_LINT ?= $(GOBIN)/golangci-lint
 GOLANGCI_LINT_CONFIG ?= .golangci.yaml
 GOLANGCI_LINT_VERSION ?= v2.10.1
@@ -45,14 +42,15 @@ MDTOC ?= $(GOBIN)/mdtoc
 MDTOC_VERSION ?= v1.4.0
 # Exclude GitHub issue templates: markdownfmt does not preserve YAML frontmatter.
 MD_FILES = $(shell find . \( -type d -name 'vendor' -o -type d -name $(patsubst %/,%,$(patsubst ./%,%,$(ASSETS_DIR))) -o -type d -path './.github/ISSUE_TEMPLATE' \) -prune -o -type f -name "*.md" -print)
+comma := ,
 PIPX ?= pipx
 PPROF_OPTIONS ?=
 PPROF_PORT ?= 9998
 PROJECT_NAME = resource-state-metrics
 PROPOSALS_DIR ?= proposals
 PROPOSAL_FILES = $(shell find $(PROPOSALS_DIR) -type f -name "*.md")
-REGISTRY ?= us-central1-docker.pkg.dev/k8s-staging-images/resource-state-metrics
-TAG ?= $(BUILD_TAG)
+# TAG is a git tag (v*), or an arbitrary image tag (e.g., a branch name), consumed by `image-push`.
+TAG ?=
 V ?= 4
 VALE ?= vale
 VALE_ARCH ?= $(if $(filter $(shell uname -m),arm64),macOS_arm64,Linux_64-bit)
@@ -64,19 +62,8 @@ YAML_FILES = $(shell find . -type d -name vendor -prune -o -type d -name $(patsu
 YQ ?= $(GOBIN)/yq
 YQ_VERSION ?= v4.52.4
 
-BRANCH = $(shell git rev-parse --abbrev-ref HEAD)
-BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
-GIT_COMMIT = $(shell git rev-parse --short HEAD)
 RUNNER = $(shell id -u -n)@$(shell hostname)
 VERSION = $(shell cat VERSION)
-GCFLAGS ?=
-LDFLAGS ?= -s -w \
-	-X ${COMMON}/version.Branch=${BRANCH} \
-	-X ${COMMON}/version.BuildDate=${BUILD_DATE} \
-	-X ${COMMON}/version.BuildUser=${RUNNER} \
-	-X ${COMMON}/version.Revision=${GIT_COMMIT} \
-	-X ${COMMON}/version.Version=v${VERSION} \
-	$(if $(CREATED_AT_EPOCH),-X 'github.com/kubernetes-sigs/resource-state-metrics/internal.CreatedAtEpoch=$(CREATED_AT_EPOCH)')
 
 .PHONY: all
 all: lint $(PROJECT_NAME)
@@ -172,21 +159,37 @@ verify: lint test verify_generated
 # Building #
 ############
 
-.PHONY: image
-image: $(PROJECT_NAME)
-	@docker build -t $(PROJECT_NAME):$(BUILD_TAG) .
+# Install goreleaser lazily, under $(LOCALBIN), versioned so that a bump triggers a reinstall.
+$(GORELEASER):
+	@mkdir -p $(LOCALBIN)
+	@GOBIN=$(LOCALBIN) $(GO) install github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)
+	@mv $(LOCALBIN)/goreleaser $@
 
-$(PROJECT_NAME): $(GO_FILES)
-	$(GO) build -a -installsuffix cgo -ldflags "$(LDFLAGS)" -gcflags "$(GCFLAGS)" -o $@
+# Build the image locally, for the host architecture, and load it into the local Docker daemon.
+.PHONY: image
+image: $(GORELEASER)
+	@$(GORELEASER) release --snapshot --clean --skip=archive,announce,publish,validate
+
+# Build the binary for the host platform, with the same flags as the released one (see .goreleaser.yaml).
+$(PROJECT_NAME): $(GO_FILES) .goreleaser.yaml | $(GORELEASER)
+	@GOOS=$(shell $(GO) env GOOS) GOARCH=$(shell $(GO) env GOARCH) CREATED_AT_EPOCH=$(CREATED_AT_EPOCH) BUILD_USER=$(RUNNER) \
+		$(GORELEASER) build --single-target --snapshot --clean --skip=validate --output $@
 
 .PHONY: build
 build: $(PROJECT_NAME)
 
+# Build and push multi-arch images to the staging registry. Cloud Build runs this, without GitHub credentials.
 .PHONY: image-push
-image-push:
-	$(DOCKER_BUILDX_CMD) build --pull --push \
-		--platform $(subst $(eval ) ,$(comma),$(addprefix linux/,$(ALL_ARCH))) \
-		-t $(REGISTRY)/$(PROJECT_NAME):$(TAG) .
+image-push: $(GORELEASER)
+	@test -n "$(TAG)" || (printf "TAG is required, for e.g., TAG=v0.1.0 or TAG=main.\n" && exit 1)
+	@GORELEASER_SKIP_GITHUB_RELEASE=true \
+		$(if $(filter v%,$(TAG)),GORELEASER_CURRENT_TAG=$(TAG),IMAGE_TAG=$(TAG)) \
+		$(GORELEASER) release --clean --skip=announce,archive$(if $(filter v%,$(TAG)),,$(comma)validate)
+
+# Create the GitHub release (archives, checksums, notes). Images are pushed by `image-push` instead.
+.PHONY: release
+release: $(GORELEASER)
+	@$(GORELEASER) release --clean --skip=ko
 
 ###########
 # Running #
@@ -194,7 +197,7 @@ image-push:
 
 .PHONY: load
 load: image
-	@kind load docker-image $(PROJECT_NAME):$(BUILD_TAG)
+	@kind load docker-image $(IMAGE_REPO):snapshot
 
 .PHONY: apply
 apply: manifests delete
@@ -381,4 +384,5 @@ lint_jsonnet_fix: licensecheck_jsonnet_fix jsonnetfmt_fix
 .PHONY: clean
 clean:
 	@git clean -fxd
+	@rm -rf dist
 
