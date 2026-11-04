@@ -217,7 +217,7 @@ func (c *configurer) buildStoreFromConfig(ctx context.Context, store *v1alpha1.S
 			}
 
 			if starlarkCfg.MaxSteps > 0 {
-				maxSteps = starlarkCfg.MaxSteps
+				maxSteps = int(starlarkCfg.MaxSteps)
 			}
 
 			families[idx].starlarkResolver = resolver.NewStarlarkResolver(
