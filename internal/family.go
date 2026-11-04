@@ -152,7 +152,7 @@ func generatePeripheralMetric(familyRawBuilder *strings.Builder, familyName stri
 // cardinality tracking stays accurate and idempotent across reprocessing (e.g. informer relists).
 // If the family is cut off due to cardinality limits, the returned string is empty, suppressing
 // output, while the real sample count is still returned.
-func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) (string, int64) {
+func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) (string, string, int64) {
 	logger := f.logger.WithValues("family", f.Name)
 	cutoff := f.IsCutoff()
 
@@ -217,10 +217,10 @@ func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) 
 	if cutoff {
 		logger.V(1).Info("Family is cut off due to cardinality limits, suppressing metric output")
 
-		return "", sampleCount
+		return "", metricStr, sampleCount
 	}
 
-	return metricStr, sampleCount
+	return metricStr, metricStr, sampleCount
 }
 
 // buildMetricStringFromStarlark resolves metrics using the Starlark resolver.

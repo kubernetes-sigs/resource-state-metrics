@@ -115,3 +115,65 @@ func TestStore_ResourceCutoffEnforcement(t *testing.T) {
 		t.Fatalf("expected metric generation to resume after cutoff cleared, got %v", metricsAfter)
 	}
 }
+
+// TestStoreRecoveryRestoresCachedMetrics exercises recovery for an object that
+// receives no further events after its cached metrics were suppressed.
+func TestStoreRecoveryRestoresCachedMetrics(t *testing.T) {
+	t.Parallel()
+
+	family := &FamilyType{
+		Family: v1alpha1.Family{
+			Name:     "recovery",
+			Help:     "recovery",
+			Resolver: v1alpha1.ResolverTypeUnstructured,
+			Metrics: []v1alpha1.Metric{
+				{Value: "1"},
+			},
+		},
+	}
+
+	store := newStore(klog.Background(), nil, []*FamilyType{family}, v1alpha1.ResolverTypeUnstructured, nil, 100000, 5)
+	tracker := NewCardinalityTracker(1, 0.8)
+	store.SetCardinalityTracker(tracker)
+
+	objA := makeUnstructured("a", "a", "default")
+	objB := makeUnstructured("b", "b", "default")
+
+	for _, obj := range []*unstructured.Unstructured{objA, objB} {
+		if err := store.Add(obj); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if !tracker.IsFamilyCutoff(family.Name) {
+		t.Fatal("expected store cutoff after adding two samples")
+	}
+
+	if err := store.Update(objA); err != nil {
+		t.Fatal(err)
+	}
+
+	store.mutex.RLock()
+	gotBefore := store.metrics[types.UID("a")]
+	store.mutex.RUnlock()
+
+	if len(gotBefore) != 1 || gotBefore[0] != "" {
+		t.Fatalf("expected the update during cutoff to suppress a's cached metric, got %q", gotBefore)
+	}
+
+	if err := store.Delete(objB); err != nil {
+		t.Fatal(err)
+	}
+
+	if tracker.IsFamilyCutoff(family.Name) {
+		t.Error("family remains cut off after store cardinality recovered")
+	}
+
+	store.mutex.RLock()
+	gotAfter := store.metrics[types.UID("a")]
+	store.mutex.RUnlock()
+
+	if len(gotAfter) != 1 || gotAfter[0] == "" {
+		t.Errorf("surviving object's cached metric remains suppressed after recovery: %q", gotAfter)
+	}
+}
