@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
@@ -84,6 +85,24 @@ func TestFamilyType_rawFrom(t *testing.T) {
 					Metrics: []v1alpha1.Metric{
 						{
 							Labels:   []v1alpha1.Label{},
+							Value:    "42",
+							Resolver: v1alpha1.ResolverTypeCEL,
+						},
+					},
+				},
+			},
+			expected: "kube_customresource_test_family{group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 42.000000\n",
+		},
+		{
+			// A label whose expression fails to resolve is left out of the sample.
+			name: "CEL label on a missing field",
+			family: &FamilyType{
+				Family: v1alpha1.Family{
+					Name: "test_family",
+					Help: "test_help",
+					Metrics: []v1alpha1.Metric{
+						{
+							Labels:   []v1alpha1.Label{{Name: "missing", Value: "o.spec.doesNotExist"}},
 							Value:    "42",
 							Resolver: v1alpha1.ResolverTypeCEL,
 						},
@@ -467,5 +486,21 @@ func BenchmarkCollectIndexedResolvedValuesNonIndexed(b *testing.B) {
 		if got := collectIndexedResolvedValues(resolved); got != nil {
 			b.Fatalf("expected no values, got %d", len(got))
 		}
+	}
+}
+
+// A CEL expression that fails on an object, e.g. because a field is missing, must skip the metric silently instead of
+// returning the text of the expression as the value.
+func TestResolveMetricValueSkipsFailedCELExpression(t *testing.T) {
+	t.Parallel()
+
+	valueExpr := "o.status.conditions.exists(c, c.type == 'Ready' && c.status == 'True') ? 1 : 0"
+	celResolver := resolver.NewCELResolver(klog.NewKlogr(), 10e5, 5*time.Second, nil, "ns", "rmm", "family")
+	objWithoutConditions := map[string]any{"metadata": map[string]any{"name": "foo"}}
+
+	value, ok, err := resolveMetricValue(celResolver, valueExpr, objWithoutConditions, map[string][]string{})
+
+	if err != nil || ok || value != "" {
+		t.Errorf("resolveMetricValue = (%q, %v, %v), want to skip without a value or an error", value, ok, err)
 	}
 }

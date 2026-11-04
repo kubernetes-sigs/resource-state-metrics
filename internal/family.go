@@ -350,8 +350,12 @@ func resolveLabels(labels []v1alpha1.Label, resolverInstance resolver.Resolver, 
 		// Collect list-indexed values in deterministic suffix order (#0, #1, ...)
 		// to match the order used by resolveMetricValue. Map iteration order is
 		// non-deterministic and would decouple labels from their metric values.
+		// A label that resolved to nothing (e.g. a missing field) adds no entry,
+		// so it is left out of the sample instead of suppressing it.
 		sanitizedName := sanitizeKey(label.Name)
-		resolvedExpandedLabelSet[sanitizedName] = append(resolvedExpandedLabelSet[sanitizedName], collectIndexedResolvedValues(resolvedLabelset)...)
+		if indexed := collectIndexedResolvedValues(resolvedLabelset); len(indexed) > 0 {
+			resolvedExpandedLabelSet[sanitizedName] = append(resolvedExpandedLabelSet[sanitizedName], indexed...)
+		}
 
 		// Process non-list entries (map keys, non-composite values).
 		for k, v := range resolvedLabelset {
