@@ -445,11 +445,11 @@ func (cr *CELResolver) resolveMapInner(m map[string]interface{}, out map[string]
 	}
 }
 
-// defaultMapping returns an empty result for a query that failed to resolve. Callers
-// treat an empty result as "nothing to emit", so the metric (or the label) of the
-// object is skipped instead of being written with the text of the query as its value.
+// defaultMapping returns nil for a query that failed to resolve, so the metric (or
+// the label) of the object is skipped instead of being written with the text of the
+// query as its value. See Resolver.Resolve.
 func (cr *CELResolver) defaultMapping(query string) map[string]string {
 	cr.logger.V(2).Info("query fell back to default mapping (will be skipped at write time)", "query", query)
 
-	return map[string]string{}
+	return nil
 }

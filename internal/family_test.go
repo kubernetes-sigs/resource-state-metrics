@@ -112,6 +112,24 @@ func TestFamilyType_rawFrom(t *testing.T) {
 			expected: "kube_customresource_test_family{group=\"\",version=\"v1\",kind=\"Pod\",name=\"test-pod\",namespace=\"test-namespace\"} 42.000000\n",
 		},
 		{
+			// A label that resolves to an empty list emits no samples for the object.
+			name: "CEL label on an empty list",
+			family: &FamilyType{
+				Family: v1alpha1.Family{
+					Name: "test_family",
+					Help: "test_help",
+					Metrics: []v1alpha1.Metric{
+						{
+							Labels:   []v1alpha1.Label{{Name: "type", Value: "o.status.conditions.filter(c, c.type == 'DoesNotExist').map(c, c.type)"}},
+							Value:    "42",
+							Resolver: v1alpha1.ResolverTypeCEL,
+						},
+					},
+				},
+			},
+			expected: "",
+		},
+		{
 			// name and namespace labels are auto-injected
 			name: "non-empty family with unstructured resolver",
 			family: &FamilyType{

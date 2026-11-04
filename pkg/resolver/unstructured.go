@@ -59,14 +59,15 @@ func (ur *UnstructuredResolver) Resolve(query string, unstructuredObjectMap map[
 }
 
 // unresolved handles a query that does not resolve to a field. A numeric literal
-// (for example, "1") is returned as its own value; anything else returns an empty
-// result, so the metric (or the label) of the object is skipped instead of being
-// written with the text of the query as its value.
+// (for example, "1") is returned as its own value; anything else returns nil, so
+// the metric (or the label) of the object is skipped instead of being written
+// with the text of the query as its value.
 func (ur *UnstructuredResolver) unresolved(logger klog.Logger, query string) map[string]string {
 	if _, err := strconv.ParseFloat(query, 64); err == nil {
 		return map[string]string{query: query}
 	}
+
 	logger.V(2).Info("query did not resolve to a field, skipping")
 
-	return map[string]string{}
+	return nil
 }
