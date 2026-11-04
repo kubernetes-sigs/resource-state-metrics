@@ -1,0 +1,60 @@
+---
+# Copyright 2026 The Kubernetes resource-state-metrics Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+name: resourcemetricsmonitor-bars-missing-label
+description: >
+  Tests that a label whose expression fails to resolve (here, a field that
+  does not exist on the object) is left out of the sample, instead of being
+  written with the text of the expression as its value.
+in:
+  apiVersion: resource-state-metrics.instrumentation.k8s-sigs.io/v1alpha1
+  kind: ResourceMetricsMonitor
+  metadata:
+    name: resourcemetricsmonitor-bars-missing-label
+    namespace: default
+  spec:
+    configuration:
+      stores:
+        - group: "samplecontroller.k8s.io"
+          version: "v1beta1"
+          kind: "Bar"
+          resource: "bars"
+          families:
+            - name: "bars_missing_label"
+              help: "Replica count with a label whose field is missing"
+              metrics:
+                - resolver: "cel"
+                  labels:
+                    - name: "missing"
+                      value: "o.spec.doesNotExist"
+                  value: "o.status.replicas"
+metrics:
+  - '# HELP kube_customresource_bars_missing_label Replica count with a label whose field is missing'
+  - '# TYPE kube_customresource_bars_missing_label gauge'
+  - 'kube_customresource_bars_missing_label{group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample",namespace="default"} 4.000000'
+  - 'kube_customresource_bars_missing_label{group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample-secondary",namespace="default"} 1.000000'
+status:
+  cardinality:
+    total: 2
+    thresholdsExceeded: false
+  conditions:
+    - type: Processed
+      status: "True"
+      reason: EventHandlerSucceeded
+    - type: CardinalityCutoff
+      status: "False"
+      reason: CardinalityOK
+    - type: CardinalityWarning
+      status: "False"
+      reason: CardinalityOK
