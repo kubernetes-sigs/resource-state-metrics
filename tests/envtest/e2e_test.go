@@ -41,8 +41,8 @@ import (
 //
 // Two modes of operation:
 //
-//	KUBEBUILDER_ASSETS=<path>    – starts a local kube-apiserver + etcd  (make test_compare_metrics)
-//	USE_EXISTING_CLUSTER=true    – connects to the current KUBECONFIG    (make test_compare_metrics_kind)
+//	KUBEBUILDER_ASSETS=<path>    – starts a local kube-apiserver + etcd  (make test_e2e_envtest)
+//	USE_EXISTING_CLUSTER=true    – connects to the current KUBECONFIG    (make test_e2e_envtest_kind)
 //
 //nolint:gocognit,cyclop
 func TestE2EEnvtest(t *testing.T) {
@@ -51,7 +51,7 @@ func TestE2EEnvtest(t *testing.T) {
 	useExisting := os.Getenv("USE_EXISTING_CLUSTER") == "true"
 
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" && !useExisting {
-		t.Skip("KUBEBUILDER_ASSETS or USE_EXISTING_CLUSTER not set; run with: make test_compare_metrics")
+		t.Skip("KUBEBUILDER_ASSETS or USE_EXISTING_CLUSTER not set; run with: make test_e2e_envtest")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -172,17 +172,6 @@ func TestE2EEnvtest(t *testing.T) {
 
 		t.Run(testName, func(t *testing.T) {
 			t.Parallel()
-
-			// Cardinality cutoff golden rules (ThresholdsExceeded=true) are skipped
-			// because real API servers emit Watch events after the initial List,
-			// which trigger Update → Add → buildMetricString with cutoff=true,
-			// overwriting previously-stored metrics with empty strings. Fake clients
-			// never re-emit those events, so the stored metrics survive the cutoff.
-			// Fixing this requires a controller change; these edge cases are already
-			// validated by TestGoldenRules with fake clients.
-			if e.rule.Status != nil && e.rule.Status.Cardinality != nil && e.rule.Status.Cardinality.ThresholdsExceeded {
-				t.Skipf("Skipping cardinality cutoff golden rule (validated by TestGoldenRules)")
-			}
 
 			envtestPollCompareMetrics(t, f, e.rule.Metrics)
 

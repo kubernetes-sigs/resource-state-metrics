@@ -60,7 +60,7 @@ Per default the tests will use [`envtest`](https://github.com/kubernetes-sigs/co
 > [!NOTE] No cleanup of the `testdata` will be done in this case.
 
 ```bash
-USE_EXISTING_CLUSTER=true make test_compare_metrics
+make test_e2e_envtest_kind
 ```
 
 ## Notes
