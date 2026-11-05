@@ -41,7 +41,13 @@ type CollectorsType struct {
 	mu              sync.RWMutex
 	kubeconfig      string
 	collectors      []collectors
-	builtCollectors []*metricsstore.MetricsStore
+	builtCollectors []builtCollector
+}
+
+// builtCollector pairs a built metrics store with the resource it exposes.
+type builtCollector struct {
+	resource string
+	store    *metricsstore.MetricsStore
 }
 
 // SetKubeConfig sets the kubeconfig for the collectors.
@@ -70,7 +76,10 @@ func (ct *CollectorsType) Build(ctx context.Context) {
 	logger := klog.FromContext(ctx)
 
 	for _, c := range ct.collectors {
-		ct.builtCollectors = append(ct.builtCollectors, c.BuildCollector(ctx, ct.kubeconfig))
+		ct.builtCollectors = append(ct.builtCollectors, builtCollector{
+			resource: c.GVKR().Resource,
+			store:    c.BuildCollector(ctx, ct.kubeconfig),
+		})
 		c.Register()
 	}
 
@@ -82,8 +91,8 @@ func (ct *CollectorsType) Write(w io.Writer) {
 	ct.mu.RLock()
 	defer ct.mu.RUnlock()
 
-	for _, c := range ct.builtCollectors {
-		mw := metricsstore.NewMetricsWriter(c)
+	for _, bc := range ct.builtCollectors {
+		mw := metricsstore.NewMetricsWriter(bc.resource, bc.store)
 		_ = mw.WriteAll(w)
 	}
 }

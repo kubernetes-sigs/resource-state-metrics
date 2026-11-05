@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	cel.dev/cel-go v0.33.2
-	github.com/KimMachineGun/automemlimit v0.7.0
+	github.com/KimMachineGun/automemlimit v0.7.5
 	github.com/google/go-cmp v0.7.0
 	github.com/iancoleman/strcase v0.3.0
 	github.com/prometheus/client_golang v1.25.0
@@ -18,7 +18,7 @@ require (
 	k8s.io/client-go v0.37.2
 	k8s.io/code-generator v0.37.2
 	k8s.io/klog/v2 v2.140.0
-	k8s.io/kube-state-metrics/v2 v2.15.0
+	k8s.io/kube-state-metrics/v2 v2.20.0
 	sigs.k8s.io/yaml v1.6.0
 )
 
@@ -30,7 +30,7 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
-	github.com/go-logr/logr v1.4.3 // indirect
+	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-openapi/jsonpointer v1.0.0 // indirect
 	github.com/go-openapi/jsonreference v1.0.0 // indirect
 	github.com/go-openapi/swag v0.27.1 // indirect
@@ -81,5 +81,3 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 )
-
-replace k8s.io/kube-state-metrics/v2 => k8s.io/kube-state-metrics/v2 v2.15.0 // Pin
