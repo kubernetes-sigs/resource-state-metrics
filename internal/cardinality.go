@@ -168,9 +168,15 @@ func (ct *CardinalityTracker) CheckThresholds() []ThresholdViolation {
 
 	var violations []ThresholdViolation
 
+	// A family stays cut off while the whole store is over its threshold, even if the family is within its own.
+	storeOver := ct.storeThreshold > 0 && float64(ct.storeTotal)/float64(ct.storeThreshold) > 1.0
+
 	for family, count := range ct.perFamily {
 		threshold, hasThreshold := ct.familyThreshold[family]
 		if !hasThreshold || threshold <= 0 {
+			// Only the store threshold applies, so the family recovers together with the store.
+			ct.cutoffFamilies[family] = storeOver
+
 			continue
 		}
 
@@ -195,11 +201,11 @@ func (ct *CardinalityTracker) CheckThresholds() []ThresholdViolation {
 				Threshold: threshold,
 				Severity:  SeverityWarning,
 			})
-			// Below 100% of threshold; clear cutoff and recover
-			ct.cutoffFamilies[family] = false
+			// Below 100% of threshold; recover unless the store is over its threshold
+			ct.cutoffFamilies[family] = storeOver
 		default:
-			// Below warning threshold; clear cutoff and recover
-			ct.cutoffFamilies[family] = false
+			// Below warning threshold; recover unless the store is over its threshold
+			ct.cutoffFamilies[family] = storeOver
 		}
 	}
 

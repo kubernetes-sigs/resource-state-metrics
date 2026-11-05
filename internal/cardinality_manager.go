@@ -126,6 +126,14 @@ func (m *GlobalCardinalityManager) CheckThresholds(uid types.UID, resourceThresh
 		threshold = m.resourceDefaultThreshold
 	}
 
+	// A resource stays cut off while the global total is over its threshold, even if the resource is within its own.
+	globalOver := m.globalThreshold > 0 && float64(m.globalTotal)/float64(m.globalThreshold) > 1.0
+
+	if threshold <= 0 {
+		// Only the global threshold applies, so the resource recovers together with it.
+		m.cutoffResources[uid] = globalOver
+	}
+
 	if threshold > 0 {
 		ratio := float64(resourceCardinality) / float64(threshold)
 
@@ -148,9 +156,9 @@ func (m *GlobalCardinalityManager) CheckThresholds(uid types.UID, resourceThresh
 				Threshold: threshold,
 				Severity:  SeverityWarning,
 			})
-			m.cutoffResources[uid] = false
+			m.cutoffResources[uid] = globalOver
 		default:
-			m.cutoffResources[uid] = false
+			m.cutoffResources[uid] = globalOver
 		}
 	}
 
