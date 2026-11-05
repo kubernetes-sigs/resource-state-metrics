@@ -122,10 +122,11 @@ func (o *Options) Read() {
 		registeredCELTimeout = flag.Int(celTimeoutFlagName, CELDefaultTimeout, "Maximum time in seconds for CEL expression evaluation. This timeout enforces a wall-clock limit on query execution to prevent slow expressions from blocking metric generation. Increase if complex legitimate queries timeout.")
 		//nolint:lll
 		registeredGlobalCardinalityLimit = flag.Int64(globalCardinalityLimitFlagName, DefaultGlobalCardinalityLimit, "Maximum total cardinality across all RMM resources. 0 means unlimited. When exceeded, all metric generation is cut off.")
-		registeredKubeconfig = flag.String(kubeconfigFlagName, os.Getenv("KUBECONFIG"), "Path to a kubeconfig. Only required if out-of-cluster.")
+		registeredKubeconfig = stringFlagLookupPreSync(kubeconfigFlagName, os.Getenv("KUBECONFIG"), "Path to a kubeconfig. Only required if out-of-cluster.")
 		registeredMainHost = flag.String(mainHostFlagName, DefaultListenHost, "Host to expose main metrics on.")
 		registeredMainPort = flag.Int(mainPortFlagName, 9999, "Port to expose main metrics on.")
-		registeredMasterURL = flag.String(masterURLFlagName, os.Getenv("KUBERNETES_MASTER"), "The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.")
+		//nolint:lll
+		registeredMasterURL = stringFlagLookupPreSync(masterURLFlagName, os.Getenv("KUBERNETES_MASTER"), "The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.")
 		registeredRatioGOMEMLIMIT = flag.Float64(ratioGOMEMLIMITFlagName, 0.9, "GOMEMLIMIT to memory quota ratio.")
 		//nolint:lll
 		registeredResourceCardinalityDefault = flag.Int64(resourceCardinalityDefaultFlagName, DefaultResourceCardinalityDefault, "Default cardinality limit per RMM resource. Can be overridden per-RMM via configuration YAML. 0 means unlimited.")
@@ -164,6 +165,11 @@ func (o *Options) Read() {
 				}
 			}
 		})
+
+		// Sync pre-registered flags to pick up parsed/overridden values
+		// (see stringFlagLookupPreSync for why this is needed).
+		stringFlagLookupPreSyncSync(&registeredKubeconfig, kubeconfigFlagName)
+		stringFlagLookupPreSyncSync(&registeredMasterURL, masterURLFlagName)
 	})
 
 	// Copy registered values to this Options instance
@@ -226,4 +232,35 @@ func validateFlag(name, value string) error {
 	}
 
 	return nil
+}
+
+// stringFlagLookupPreSync registers a string flag if it does not already exist on the
+// default flag set, otherwise it returns a pointer to its default value as a
+// placeholder. This prevents "flag redefined" panics when another package
+// (e.g. controller-runtime via envtest) registers the same flag name in an init().
+//
+// For pre-existing flags the returned pointer is a copy of the default.
+// Call stringFlagLookupPreSyncSync after flag.Parse() and env-var overrides to update
+// the pointer to the final resolved value.
+//
+// The alternative is to use a custom build tag which has
+// some disadvantages as the IDE must be aware of the build tag and the test must be run with the build tag.
+func stringFlagLookupPreSync(name, value, usage string) *string {
+	if f := flag.Lookup(name); f != nil {
+		v := f.DefValue
+
+		return &v
+	}
+
+	return flag.String(name, value, usage)
+}
+
+// stringFlagLookupPreSyncSync updates ptr to reflect the current value of the named flag.
+// Called after flag.Parse() and env-var overrides to pick up changes for
+// flags that were pre-registered by another package (see stringFlagLookupPreSync).
+func stringFlagLookupPreSyncSync(ptr **string, name string) {
+	if f := flag.Lookup(name); f != nil {
+		v := f.Value.String()
+		*ptr = &v
+	}
 }
