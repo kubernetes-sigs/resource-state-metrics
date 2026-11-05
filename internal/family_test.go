@@ -161,7 +161,7 @@ func TestFamilyType_rawFrom(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			actual, sampleCount := tt.family.buildMetricString(unstructuredWrapper)
+			actual, _, sampleCount := tt.family.buildMetricString(unstructuredWrapper)
 			if actual != tt.expected {
 				t.Errorf("%s\n%s", actual, cmp.Diff(actual, tt.expected))
 			}
