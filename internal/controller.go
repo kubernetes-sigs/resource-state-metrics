@@ -21,6 +21,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"net"
+	"net/http"
 	"reflect"
 	"strconv"
 	"sync"
@@ -59,6 +60,12 @@ const (
 	rateLimiterMaxDelay  = 5 * time.Minute
 	rateLimiterQPS       = 50
 	rateLimiterBurst     = 300
+
+	// shutdownTimeout is how long the HTTP servers are given to drain in-flight
+	// connections after the controller context is cancelled. Using the already-
+	// cancelled parent context would cause Shutdown to return immediately with
+	// context.Canceled, aborting active scrapes mid-flight.
+	shutdownTimeout = 30 * time.Second
 )
 
 // schemeOnce ensures scheme registration happens only once (thread-safe for parallel tests).
@@ -282,14 +289,18 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 	go func() {
 		logger.V(1).Info("Starting telemetry server on", "address", selfAddr)
 
-		if err := self.ListenAndServe(); err != nil {
+		// ErrServerClosed is the expected return value when Shutdown is called;
+		// treat it as a normal termination rather than an error.
+		if err := self.ListenAndServe(); err != nil && !stderrors.Is(err, http.ErrServerClosed) {
 			logger.Error(err, "stopping telemetry server")
 		}
 	}()
 	go func() {
 		logger.V(1).Info("Starting main server on", "address", mainAddr)
 
-		if err := main.ListenAndServe(); err != nil {
+		// ErrServerClosed is the expected return value when Shutdown is called;
+		// treat it as a normal termination rather than an error.
+		if err := main.ListenAndServe(); err != nil && !stderrors.Is(err, http.ErrServerClosed) {
 			logger.Error(err, "stopping main server")
 		}
 	}()
@@ -297,11 +308,19 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 	<-ctx.Done()
 	logger.V(1).Info("Shutting down servers")
 
-	if err := self.Shutdown(ctx); err != nil {
+	// Derive a non-cancelled context from parent ctx so that Shutdown can
+	// actually drain in-flight connections. Using the already-cancelled
+	// parent ctx directly would cause Shutdown to return immediately with
+	// context.Canceled, dropping active scrapes mid-flight. Using
+	// context.WithoutCancel inherits context values while ignoring cancellation.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+	defer shutdownCancel()
+
+	if err := self.Shutdown(shutdownCtx); err != nil {
 		logger.Error(err, "error shutting down telemetry server")
 	}
 
-	if err := main.Shutdown(ctx); err != nil {
+	if err := main.Shutdown(shutdownCtx); err != nil {
 		logger.Error(err, "error shutting down main server")
 	}
 
