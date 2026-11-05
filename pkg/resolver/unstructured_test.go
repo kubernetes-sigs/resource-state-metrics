@@ -105,44 +105,39 @@ func TestUnstructuredResolver_Resolve(t *testing.T) {
 		{
 			name:  "error traversing obj",
 			query: "fields.string.bar",
-			want: map[string]string{
-				"fields.string.bar": "fields.string.bar",
-			},
+			want:  nil,
 		},
 		{
 			name:  "field does not exist",
 			query: "fields.bar",
+			want:  nil,
+		},
+		{
+			name:  "numeric literal",
+			query: "42",
 			want: map[string]string{
-				"fields.bar": "fields.bar",
+				"42": "42",
 			},
 		},
 		{
 			name:  "intermediate field does not exist",
 			query: "fields.fake.string",
-			want: map[string]string{
-				"fields.fake.string": "fields.fake.string",
-			},
+			want:  nil,
 		},
 		{
 			name:  "intermediate field is null", // happens easily in YAML
 			query: "fields.nil.foo",
-			want: map[string]string{
-				"fields.nil.foo": "fields.nil.foo",
-			},
+			want:  nil,
 		},
 		{
 			name:  "array syntax is not supported",
 			query: "fields.array[1]",
-			want: map[string]string{
-				"fields.array[1]": "fields.array[1]",
-			},
+			want:  nil,
 		},
 		{
 			name:  "slice syntax is not supported",
 			query: "fields.slice[1]",
-			want: map[string]string{
-				"fields.slice[1]": "fields.slice[1]",
-			},
+			want:  nil,
 		},
 	}
 

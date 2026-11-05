@@ -22,6 +22,8 @@ type Resolver interface {
 	// Resolve resolves the given expression.
 	// NOTE: The returned map should have a single key:value (query:resolved[LabelValues,Value], of unit length) pair if the expression is resolved to a non-composite value.
 	// NOTE: The returned list representations should follow a `list_name#index` format.
+	// NOTE: A nil map means the expression could not be resolved (for example, a missing field), while an empty,
+	// non-nil map means it resolved to no values (for example, an empty list).
 	Resolve(query string, unstructuredObjectMap map[string]interface{}) map[string]string
 
 	//nolint:godox

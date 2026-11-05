@@ -18,6 +18,7 @@ package resolver
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -45,17 +46,28 @@ func (ur *UnstructuredResolver) Resolve(query string, unstructuredObjectMap map[
 	gotResolved, found, err := unstructured.NestedFieldNoCopy(unstructuredObjectMap, strings.Split(query, ".")...)
 
 	if !found {
-		logger.V(2).Info("query fell back to default mapping (field not found, will be skipped at write time)", "query", query)
-
-		return map[string]string{query: query}
+		return ur.unresolved(logger, query)
 	}
 
 	if err != nil {
 		logger.V(1).Info("ignoring resolution for query", "info", err)
-		logger.V(2).Info("query fell back to default mapping (will be skipped at write time)", "query", query)
 
-		return map[string]string{query: query}
+		return ur.unresolved(logger, query)
 	}
 
 	return map[string]string{query: fmt.Sprintf("%v", gotResolved)}
+}
+
+// unresolved handles a query that does not resolve to a field. A numeric literal
+// (for example, "1") is returned as its own value; anything else returns nil, so
+// the metric (or the label) of the object is skipped instead of being written
+// with the text of the query as its value.
+func (ur *UnstructuredResolver) unresolved(logger klog.Logger, query string) map[string]string {
+	if _, err := strconv.ParseFloat(query, 64); err == nil {
+		return map[string]string{query: query}
+	}
+
+	logger.V(2).Info("query did not resolve to a field, skipping")
+
+	return nil
 }

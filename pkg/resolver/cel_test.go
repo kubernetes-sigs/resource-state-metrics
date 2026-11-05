@@ -119,30 +119,22 @@ func TestNewCELResolver_Resolve(t *testing.T) {
 		{
 			name:  "error traversing obj",
 			query: "o.fields.string.bar",
-			want: map[string]string{
-				"o.fields.string.bar": "o.fields.string.bar",
-			},
+			want:  nil,
 		},
 		{
 			name:  "field does not exist",
 			query: "o.fields.bar",
-			want: map[string]string{
-				"o.fields.bar": "o.fields.bar",
-			},
+			want:  nil,
 		},
 		{
 			name:  "intermediate field does not exist",
 			query: "o.fields.fake.string",
-			want: map[string]string{
-				"o.fields.fake.string": "o.fields.fake.string",
-			},
+			want:  nil,
 		},
 		{
 			name:  "intermediate field is null", // happens easily in YAML
 			query: "o.fields.nil.foo",
-			want: map[string]string{
-				"o.fields.nil.foo": "o.fields.nil.foo",
-			},
+			want:  nil,
 		},
 	}
 
@@ -190,7 +182,7 @@ func TestCELResolver_UnixSeconds(t *testing.T) {
 			name:  "invalid timestamp returns error",
 			obj:   map[string]any{"timestamp": "not-a-timestamp"},
 			query: `unixSeconds(o.timestamp)`,
-			want:  map[string]string{`unixSeconds(o.timestamp)`: `unixSeconds(o.timestamp)`},
+			want:  nil,
 		},
 	}
 
@@ -250,7 +242,7 @@ func TestCELResolver_Quantity(t *testing.T) {
 			name:  "invalid quantity returns error",
 			obj:   map[string]any{"cpu": "not-a-quantity"},
 			query: `quantity(o.cpu)`,
-			want:  map[string]string{`quantity(o.cpu)`: `quantity(o.cpu)`},
+			want:  nil,
 		},
 	}
 
