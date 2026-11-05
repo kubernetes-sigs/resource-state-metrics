@@ -1,0 +1,94 @@
+# Copyright 2026 The Kubernetes resource-state-metrics Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+version: 2
+project_name: resource-state-metrics
+dist: dist
+snapshot:
+  version_template: snapshot
+builds:
+  - id: resource-state-metrics
+    main: .
+    binary: resource-state-metrics
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/prometheus/common/version.Branch={{ .Branch }}
+      - -X github.com/prometheus/common/version.BuildDate={{ .CommitDate }}
+      - -X github.com/prometheus/common/version.BuildUser={{ envOrDefault "BUILD_USER" "goreleaser" }}
+      - -X github.com/prometheus/common/version.Revision={{ .ShortCommit }}
+      - -X github.com/prometheus/common/version.Version={{ if .IsSnapshot }}{{ .Version }}{{ else }}{{ .Tag }}{{ end }}
+      - '{{ if envOrDefault "CREATED_AT_EPOCH" "" }}-X github.com/kubernetes-sigs/resource-state-metrics/internal.CreatedAtEpoch={{ envOrDefault "CREATED_AT_EPOCH" "" }}{{ end }}'
+kos:
+  - &ko
+    id: release # Release: multi-arch images, pushed to the registry.
+    disable: "{{ .IsSnapshot }}"
+    build: resource-state-metrics
+    repositories:
+      - us-central1-docker.pkg.dev/k8s-staging-images/resource-state-metrics/resource-state-metrics
+    # Name used when loading the image into the local Docker daemon (`make image`).
+    local_domain: registry.k8s.io/resource-state-metrics/resource-state-metrics
+    base_image: gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+    user: "65534:65534"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    tags:
+      # Primary tag, in order of precedence:
+      #   1. $IMAGE_TAG, for non-release builds (e.g., a branch name from `make image-push TAG=main`).
+      #   2. "snapshot", for snapshot builds (`make image`).
+      #   3. The git tag (e.g., v0.1.0), for releases.
+      - '{{ if envOrDefault "IMAGE_TAG" "" }}{{ envOrDefault "IMAGE_TAG" "" }}{{ else if .IsSnapshot }}{{ .Version }}{{ else }}{{ .Tag }}{{ end }}'
+      # "latest" is only added for real releases, i.e., neither a snapshot nor an $IMAGE_TAG build.
+      # An empty result is dropped by goreleaser.
+      - '{{ if and (not .IsSnapshot) (not (envOrDefault "IMAGE_TAG" "")) }}latest{{ end }}'
+    creation_time: "{{ .CommitTimestamp }}"
+    ko_data_creation_time: "{{ .CommitTimestamp }}"
+    bare: true
+  # Snapshot: ko loads only a single platform into the local Docker daemon, so
+  # build one image for the host architecture, selected through `disable`.
+  # This is only needed for local image builds via `make image`.
+  - !!merge <<: *ko
+    id: local-amd64
+    disable: '{{ not (and .IsSnapshot (eq .Runtime.Goarch "amd64")) }}'
+    platforms:
+      - linux/amd64
+  - !!merge <<: *ko
+    id: local-arm64
+    disable: '{{ not (and .IsSnapshot (eq .Runtime.Goarch "arm64")) }}'
+    platforms:
+      - linux/arm64
+archives:
+  - id: resource-state-metrics
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+changelog:
+  disable: '{{ envOrDefault "GORELEASER_SKIP_GITHUB_RELEASE" "false" }}'
+release:
+  disable: '{{ envOrDefault "GORELEASER_SKIP_GITHUB_RELEASE" "false" }}'
+  github:
+    owner: kubernetes-sigs
+    name: resource-state-metrics
