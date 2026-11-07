@@ -22,11 +22,10 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
 	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
 	"k8s.io/apimachinery/pkg/types"
-
-	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
 )
 
 func familyProbeHeader() string {
@@ -298,6 +297,7 @@ func TestMetricsWriter_exposition_parses(t *testing.T) {
 	}
 
 	tp := expfmt.NewTextParser(model.LegacyValidation)
+
 	mfs, err := tp.TextToMetricFamilies(strings.NewReader(out))
 	if err != nil {
 		t.Fatalf("generated exposition does not parse: %v\n%s", err, out)
