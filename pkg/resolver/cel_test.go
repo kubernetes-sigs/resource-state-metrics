@@ -16,6 +16,9 @@ limitations under the License.
 package resolver
 
 import (
+	"context"
+	"errors"
+	"math"
 	"strconv"
 	"testing"
 	"time"
@@ -489,5 +492,37 @@ func TestCELResolver_ListAndMapExpansion(t *testing.T) {
 				t.Errorf("%s", cmp.Diff(got, tt.want))
 			}
 		})
+	}
+}
+
+func TestCELResolver_CancelStopsEvaluation(t *testing.T) {
+	t.Parallel()
+
+	items := make([]interface{}, 1000)
+	for i := range items {
+		items[i] = int64(i)
+	}
+
+	obj := map[string]interface{}{"items": items}
+	query := "o.items.all(a, o.items.all(b, o.items.all(c, c >= 0)))"
+	cr := NewCELResolver(klog.NewKlogr(), math.MaxUint64, time.Minute, nil, "test-ns", "test-rmm", "test-family")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+
+	go func() {
+		_, err := cr.resolveWithTimeout(ctx, query, obj, klog.NewKlogr())
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("expected a deadline exceeded error, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("evaluation kept running after the context was cancelled")
 	}
 }
