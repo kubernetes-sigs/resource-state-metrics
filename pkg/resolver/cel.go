@@ -17,6 +17,8 @@ limitations under the License.
 package resolver
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -108,17 +110,21 @@ func (cr *CELResolver) Resolve(query string, unstructuredObjectMap map[string]in
 
 	resultChan := make(chan result, 1)
 
+	ctx, cancel := context.WithTimeout(context.Background(), cr.timeout)
+	defer cancel()
+
 	go func() {
-		output, err := cr.resolveWithTimeout(query, unstructuredObjectMap, logger)
+		output, err := cr.resolveWithTimeout(ctx, query, unstructuredObjectMap, logger)
 		resultChan <- result{output: output, err: err}
 	}()
-
-	timer := time.NewTimer(cr.timeout)
-	defer timer.Stop()
 
 	select {
 	case res := <-resultChan:
 		if res.err != nil {
+			if errors.Is(res.err, context.DeadlineExceeded) {
+				return cr.timedOut(query, logger)
+			}
+
 			logger.V(1).Info("ignoring resolution for query", "info", res.err)
 
 			if cr.expressionEvaluationMetric != nil {
@@ -133,18 +139,22 @@ func (cr *CELResolver) Resolve(query string, unstructuredObjectMap map[string]in
 		}
 
 		return res.output
-	case <-timer.C:
-		logger.Error(fmt.Errorf("CEL query exceeded timeout of %v", cr.timeout), "ignoring resolution for query")
-
-		if cr.expressionEvaluationMetric != nil {
-			cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "timeout").Inc()
-		}
-
-		return cr.defaultMapping(query)
+	case <-ctx.Done():
+		return cr.timedOut(query, logger)
 	}
 }
 
-func (cr *CELResolver) resolveWithTimeout(query string, unstructuredObjectMap map[string]interface{}, logger klog.Logger) (map[string]string, error) {
+func (cr *CELResolver) timedOut(query string, logger klog.Logger) map[string]string {
+	logger.Error(fmt.Errorf("CEL query exceeded timeout of %v", cr.timeout), "ignoring resolution for query")
+
+	if cr.expressionEvaluationMetric != nil {
+		cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "timeout").Inc()
+	}
+
+	return cr.defaultMapping(query)
+}
+
+func (cr *CELResolver) resolveWithTimeout(ctx context.Context, query string, unstructuredObjectMap map[string]interface{}, logger klog.Logger) (map[string]string, error) {
 	env, err := getCELEnv()
 	if err != nil {
 		logger.Error(err, "ignoring resolution for query")
@@ -166,7 +176,7 @@ func (cr *CELResolver) resolveWithTimeout(query string, unstructuredObjectMap ma
 		return nil, err
 	}
 
-	out, evalDetails, err := cr.evaluateProgram(program, unstructuredObjectMap)
+	out, evalDetails, err := cr.evaluateProgram(ctx, program, unstructuredObjectMap)
 	cr.addCostLogging(logger, evalDetails)
 
 	if err != nil {
@@ -316,16 +326,20 @@ func nowBinding(_ ...ref.Val) ref.Val {
 	return types.Double(float64(time.Now().Unix()))
 }
 
+// celInterruptCheckFrequency is the number of comprehension iterations between checks for a cancelled context.
+const celInterruptCheckFrequency = 100
+
 func (cr *CELResolver) compileProgram(env *cel.Env, ast *cel.Ast) (cel.Program, error) {
 	return env.Program(
 		ast,
 		cel.CostLimit(cr.costLimit),
 		cel.CostTracking(new(costEstimator)),
+		cel.InterruptCheckFrequency(celInterruptCheckFrequency),
 	)
 }
 
-func (cr *CELResolver) evaluateProgram(program cel.Program, obj map[string]interface{}) (ref.Val, *cel.EvalDetails, error) {
-	return program.Eval(map[string]interface{}{"o": obj})
+func (cr *CELResolver) evaluateProgram(ctx context.Context, program cel.Program, obj map[string]interface{}) (ref.Val, *cel.EvalDetails, error) {
+	return program.ContextEval(ctx, map[string]interface{}{"o": obj})
 }
 
 func (cr *CELResolver) addCostLogging(logger klog.Logger, evalDetails *cel.EvalDetails) {
