@@ -22,6 +22,9 @@ metadata:
     bar: "0"
 spec:
   appId: test-sample-secondary
+  owner: null
+  tags: []
+  xProps: {}
   language: csharp
   os: linux
   instanceSize: small

@@ -25,6 +25,7 @@ metadata:
     id: "1000"
 spec:
   appId: test-sample
+  owner: null
   language: csharp
   os: linux
   instanceSize: small
