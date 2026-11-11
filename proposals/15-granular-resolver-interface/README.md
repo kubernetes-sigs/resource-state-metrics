@@ -520,7 +520,7 @@ The wrapper compiles every metric value and label expression once when the `Reso
 
 Two cases that exist today and keep their behaviour:
 
-- An empty list or empty map as a metric value means zero samples for that object, not an error, which is what [`family.go:301`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L301) does now for an empty result. As a label it means the label is left off the series, as now.
+- An empty list or empty map as a metric value means zero samples for that object, not an error, which is what [`family.go:301`](https://github.com/kubernetes-sigs/resource-state-metrics/blob/3b06a2a87142ce1cbc9a88115fc920c9bca3113a/internal/family.go#L301) does now for an empty result. As a label it also means zero samples for that object, as now.
 - A missing metric value, `found = false`, skips the sample and logs it at verbosity 1, which is what happens today when the self mapped query fails to parse as a number at write time. Only the log message changes, it can now say the field was missing instead of failing a float parse.
 
 Nested values are flattened by the wrapper the way CEL flattens them today, so existing output does not change. That flattening gets its own golden fixture so the behaviour is pinned before it moves.
