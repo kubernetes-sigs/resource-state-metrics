@@ -1,0 +1,60 @@
+---
+# Copyright 2026 The Kubernetes resource-state-metrics Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+name: resourcemetricsmonitor-bars-value-error
+description: >
+  Tests that a value expression which fails for one object skips that
+  object's sample instead of writing a default. test-sample has four
+  versions, so its sample is 4. test-sample-secondary has no versions
+  field, so o.spec.versions.size() errors and no sample is written for it.
+in:
+  apiVersion: resource-state-metrics.instrumentation.k8s-sigs.io/v1alpha1
+  kind: ResourceMetricsMonitor
+  metadata:
+    name: resourcemetricsmonitor-bars-value-error
+    namespace: default
+  spec:
+    configuration:
+      stores:
+        - group: "samplecontroller.k8s.io"
+          version: "v1beta1"
+          kind: "Bar"
+          resource: "bars"
+          families:
+            - name: "bars_versions"
+              help: "Number of versions of each Bar"
+              metrics:
+                - resolver: "cel"
+                  labels:
+                    - name: "app"
+                      value: "o.spec.appId"
+                  value: "o.spec.versions.size()"
+metrics:
+  - "# HELP kube_customresource_bars_versions Number of versions of each Bar"
+  - "# TYPE kube_customresource_bars_versions gauge"
+  - 'kube_customresource_bars_versions{app="test-sample",group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample",namespace="default"} 4.000000'
+status:
+  cardinality:
+    total: 1
+    thresholdsExceeded: false
+  conditions:
+    - type: Processed
+      status: "True"
+      reason: EventHandlerSucceeded
+    - type: CardinalityCutoff
+      status: "False"
+      reason: CardinalityOK
+    - type: CardinalityWarning
+      status: "False"
+      reason: CardinalityOK
