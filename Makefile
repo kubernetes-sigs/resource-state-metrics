@@ -240,7 +240,7 @@ test: test_unit test_e2e
 apply_testdata: delete_testdata
 	# Applying testdata
 	@$(KUBECTL) apply -R -f tests/manifests/custom-resource-definition
-	@$(KUBECTL) apply -R -f tests/manifests/custom-resource
+	@$(KUBECTL) apply --server-side -R -f tests/manifests/custom-resource
 	@$(YQ) '.in' $(GOLDEN_FILES) | $(KUBECTL) apply -f -
 	# Applied testdata
 

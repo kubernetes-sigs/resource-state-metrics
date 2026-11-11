@@ -40,6 +40,9 @@ spec:
               properties:
                 appId:
                   type: string
+                owner:
+                  type: string
+                  nullable: true
                 language:
                   type: string
                   enum:
