@@ -19,9 +19,11 @@ package internal
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/resolver"
 	"github.com/prometheus/client_golang/prometheus"
@@ -120,6 +122,7 @@ func (c *configurer) build(ctx context.Context, stores *sync.Map) {
 	// Second pass: detect and handle duplicates
 	seenStores := make(map[string]int)        // storeKey -> count
 	seenFamilies := make(map[string][]string) // familyName -> []storeKeys
+	familyHelps := make(map[string]string)    // familyName -> help text of the first occurrence
 	deduplicatedStores := make([]v1alpha1.Store, 0, len(allExpandedStores))
 
 	namespace := c.resource.GetNamespace()
@@ -146,6 +149,17 @@ func (c *configurer) build(ctx context.Context, stores *sync.Map) {
 		// Track family names for cross-store duplicate detection
 		for _, family := range store.Families {
 			seenFamilies[family.Name] = append(seenFamilies[family.Name], key)
+
+			help, seen := familyHelps[family.Name]
+			if !seen {
+				familyHelps[family.Name] = family.Help
+			} else if help != family.Help {
+				logger.V(1).Info("Family name used in multiple stores with different help text - the help text of the first store is used",
+					"family", family.Name,
+					"store", key,
+					"namespace", namespace,
+					"name", name)
+			}
 		}
 
 		deduplicatedStores = append(deduplicatedStores, *store)
@@ -159,11 +173,26 @@ func (c *configurer) build(ctx context.Context, stores *sync.Map) {
 		}
 	}
 
+	c.reportFamilyConflicts(logger, namespace, name, seenFamilies)
+
+	// Third pass: build the deduplicated stores
+	builtStores := make([]*StoreType, 0, len(deduplicatedStores))
+	for i := range deduplicatedStores {
+		s := c.buildStoreFromConfig(ctx, &deduplicatedStores[i])
+		builtStores = append(builtStores, s)
+	}
+
+	stores.Store(c.resource.GetUID(), builtStores)
+}
+
+// reportFamilyConflicts logs family configuration conflicts and sets the duplicate
+// families gauge for families shared across multiple stores.
+func (c *configurer) reportFamilyConflicts(logger logr.Logger, namespace, name string, seenFamilies map[string][]string) {
 	// Set gauge metrics for families shared across multiple stores.
 	if c.duplicateFamilies != nil {
 		for familyName, storeKeys := range seenFamilies {
 			if len(storeKeys) > 1 {
-				logger.V(1).Info("Family name used in multiple stores - metrics will have duplicate HELP/TYPE lines",
+				logger.V(1).Info("Family name used in multiple stores - samples are grouped and the HELP/TYPE header is written once",
 					"family", familyName,
 					"stores", storeKeys,
 					"namespace", namespace,
@@ -174,14 +203,23 @@ func (c *configurer) build(ctx context.Context, stores *sync.Map) {
 		}
 	}
 
-	// Third pass: build the deduplicated stores
-	builtStores := make([]*StoreType, 0, len(deduplicatedStores))
-	for i := range deduplicatedStores {
-		s := c.buildStoreFromConfig(ctx, &deduplicatedStores[i])
-		builtStores = append(builtStores, s)
-	}
+	// A counter family publishes a synthetic _created metric named
+	// <family name without the _total suffix>_created. Warn when a configured family
+	// already uses that name, because the writer then skips the synthetic metric.
+	for familyName := range seenFamilies {
+		if !strings.HasSuffix(familyName, "_total") {
+			continue
+		}
 
-	stores.Store(c.resource.GetUID(), builtStores)
+		createdName := strings.TrimSuffix(familyName, "_total") + "_created"
+		if _, exists := seenFamilies[createdName]; exists {
+			logger.V(1).Info("Counter family _created metric name is also used as a family name - the _created metric will be skipped",
+				"family", familyName,
+				"createdMetric", createdName,
+				"namespace", namespace,
+				"name", name)
+		}
+	}
 }
 
 func (c *configurer) buildStoreFromConfig(ctx context.Context, store *v1alpha1.Store) *StoreType {
