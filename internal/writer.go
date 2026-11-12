@@ -18,7 +18,6 @@ package internal
 import (
 	"fmt"
 	"io"
-	"strings"
 )
 
 // metricsWriter writes metrics from a group of stores to an io.Writer.
@@ -33,38 +32,46 @@ func newMetricsWriter(stores ...*StoreType) *metricsWriter {
 	}
 }
 
-// familyKey extracts the metric family name from a "# HELP <name> ..." header
-// line, so that headers of the same family can be detected across stores.
-// It falls back to the raw header string when the line does not carry a
-// family name.
-func familyKey(header string) string {
-	if rest, ok := strings.CutPrefix(header, "# HELP "); ok {
-		if name, _, ok := strings.Cut(rest, " "); ok && name != "" {
-			return name
-		}
-	}
-
-	return header
+// familySnapshot captures the family metadata, its header and its metric samples
+// for one store, so that metrics of the same family can be written together
+// across stores without holding the store locks while writing.
+type familySnapshot struct {
+	family  *FamilyType
+	header  string
+	samples []string
 }
 
 // writeStores writes out metrics from the underlying stores to the given writer, per resource.
 // It writes metrics so that the ones with the same name are grouped together when written out, and guarantees an exposition format that is safe to be ingested by Prometheus.
-// Metric families shared by multiple stores, e.g. when a wildcard store expands to several kinds, get their
-// HELP/TYPE header only once from the first store that declares them, and every store then contributes only its
-// samples to that family.
+// Families shared by multiple stores, e.g. when a wildcard store expands to several kinds, get their
+// HELP/TYPE header only once and all of their samples are written together in store order.
 func (m *metricsWriter) writeStores(writer io.Writer) error {
 	if len(m.stores) == 0 {
 		return nil
 	}
 
-	emittedHeaders := make(map[string]struct{})
+	var (
+		familyOrder []string
+		families    = make(map[string][]familySnapshot)
+	)
 
 	for _, store := range m.stores {
 		store.mutex.RLock()
-		err := m.writeFromStore(writer, store, emittedHeaders)
+		snapshots := snapshotFamilies(store)
 		store.mutex.RUnlock()
 
-		if err != nil {
+		for _, snapshot := range snapshots {
+			name := snapshot.family.Name
+			if _, seen := families[name]; !seen {
+				familyOrder = append(familyOrder, name)
+			}
+
+			families[name] = append(families[name], snapshot)
+		}
+	}
+
+	for _, name := range familyOrder {
+		if err := writeFamily(writer, families[name]); err != nil {
 			return err
 		}
 	}
@@ -72,40 +79,19 @@ func (m *metricsWriter) writeStores(writer io.Writer) error {
 	return nil
 }
 
-// writeHeaderOnce writes header to writer only when its family was not emitted before,
-// marking the family as emitted so that later stores write their samples without repeating the header.
-func writeHeaderOnce(writer io.Writer, header string, emittedHeaders map[string]struct{}) error {
-	key := familyKey(header)
+// snapshotFamilies copies the headers, metric samples and family metadata of a store
+// so that the store lock is not held while the exposition is written.
+func snapshotFamilies(store *StoreType) []familySnapshot {
+	snapshots := make([]familySnapshot, 0, len(store.Families))
 
-	if _, emitted := emittedHeaders[key]; emitted {
-		return nil
-	}
+	for familyIdx, family := range store.Families {
+		if familyIdx >= len(store.headers) {
+			break
+		}
 
-	if err := writeHeader(writer, header); err != nil {
-		return fmt.Errorf("error writing header: %w", err)
-	}
-
-	emittedHeaders[key] = struct{}{}
-
-	return nil
-}
-
-// writePeripheralHeaderOnce writes the _created peripheral header of a counter family
-// unless that header was already emitted by another store.
-func writePeripheralHeaderOnce(writer io.Writer, family *FamilyType, emittedHeaders map[string]struct{}) error {
-	peripheral := family.buildPeripheralHeader()
-
-	if peripheral == "" {
-		return nil
-	}
-
-	return writeHeaderOnce(writer, peripheral, emittedHeaders)
-}
-
-func (m *metricsWriter) writeFromStore(writer io.Writer, store *StoreType, emittedHeaders map[string]struct{}) error {
-	for familyIdx, header := range store.headers {
-		if err := writeHeaderOnce(writer, header, emittedHeaders); err != nil {
-			return err
+		snapshot := familySnapshot{
+			family: family,
+			header: store.headers[familyIdx],
 		}
 
 		for _, metricFamilies := range store.metrics {
@@ -113,16 +99,34 @@ func (m *metricsWriter) writeFromStore(writer io.Writer, store *StoreType, emitt
 				continue
 			}
 
-			if err := writeMetricFamily(writer, metricFamilies[familyIdx]); err != nil {
+			snapshot.samples = append(snapshot.samples, metricFamilies[familyIdx])
+		}
+
+		snapshots = append(snapshots, snapshot)
+	}
+
+	return snapshots
+}
+
+// writeFamily writes the header of a family once, followed by the samples collected
+// from every store and, for counters, the family's _created peripheral metric.
+func writeFamily(writer io.Writer, snapshots []familySnapshot) error {
+	first := snapshots[0]
+
+	if err := writeHeader(writer, first.header); err != nil {
+		return fmt.Errorf("error writing header: %w", err)
+	}
+
+	for _, snapshot := range snapshots {
+		for _, sample := range snapshot.samples {
+			if err := writeMetricFamily(writer, sample); err != nil {
 				return err
 			}
 		}
+	}
 
-		if familyIdx >= len(store.Families) {
-			continue
-		}
-
-		if err := writePeripheralHeaderOnce(writer, store.Families[familyIdx], emittedHeaders); err != nil {
+	if peripheral := first.family.buildPeripheralHeader(); peripheral != "" {
+		if err := writeHeader(writer, peripheral); err != nil {
 			return fmt.Errorf("error writing peripheral header: %w", err)
 		}
 	}
@@ -146,5 +150,5 @@ func writeMetricFamily(writer io.Writer, metric string) error {
 		return fmt.Errorf("error writing metric family after %d bytes: %w", n, err)
 	}
 
-	return nil
+	return err
 }

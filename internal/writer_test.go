@@ -28,12 +28,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func familyProbeHeader() string {
-	return "# HELP kube_customresource_probe Ready status\n# TYPE kube_customresource_probe gauge"
+func familyHeader(name, help, kind string) string {
+	return "# HELP " + name + " " + help + "\n# TYPE " + name + " " + kind
 }
 
-func familyProbeCounterHeader() string {
-	return "# HELP kube_customresource_probe_sets_total Sets total\n# TYPE kube_customresource_probe_sets_total counter"
+func familyFor(name string, createdAt time.Time) *FamilyType {
+	return &FamilyType{Family: v1alpha1.Family{Name: name}, createdAt: createdAt}
 }
 
 func TestMetricsWriter_writeAllTo(t *testing.T) {
@@ -54,7 +54,8 @@ func TestMetricsWriter_writeAllTo(t *testing.T) {
 			m: metricsWriter{
 				stores: []*StoreType{
 					{
-						headers: []string{"header1", "header2"},
+						headers:  []string{"header1", "header2"},
+						Families: []*FamilyType{familyFor("fam1", time.Time{}), familyFor("fam2", time.Time{})},
 						metrics: map[types.UID][]string{
 							"uid1": {"metric1", "metric2"},
 							"uid2": {"metric1", "metric2"},
@@ -69,7 +70,8 @@ func TestMetricsWriter_writeAllTo(t *testing.T) {
 			m: metricsWriter{
 				stores: []*StoreType{
 					{
-						headers: []string{"header1", "header2", "header3"},
+						headers:  []string{"header1", "header2", "header3"},
+						Families: []*FamilyType{familyFor("fam1", time.Time{}), familyFor("fam2", time.Time{}), familyFor("fam3", time.Time{})},
 						metrics: map[types.UID][]string{
 							"uid1": {"metric1", "metric2"},
 							"uid2": {"metric1", "metric2", "metric3"},
@@ -84,7 +86,8 @@ func TestMetricsWriter_writeAllTo(t *testing.T) {
 			m: metricsWriter{
 				stores: []*StoreType{
 					{
-						headers: []string{"header1"},
+						headers:  []string{"header1"},
+						Families: []*FamilyType{familyFor("fam1", time.Time{})},
 						metrics: map[types.UID][]string{
 							"uid1": {"metric1", "metric2"},
 							"uid2": {"metric1", "metric2"},
@@ -111,7 +114,8 @@ func TestMetricsWriter_writeAllTo(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
+	for i := range tests {
+		tt := tests[i]
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -127,12 +131,60 @@ func TestMetricsWriter_writeAllTo(t *testing.T) {
 	}
 }
 
+func TestMetricsWriter_groupsFamiliesAcrossStores(t *testing.T) {
+	t.Parallel()
+
+	readyHeader := familyHeader("kube_customresource_ready", "Ready status", "gauge")
+	syncedHeader := familyHeader("kube_customresource_synced", "Synced status", "gauge")
+	readyFamily := familyFor("ready", time.Time{})
+	syncedFamily := familyFor("synced", time.Time{})
+
+	stores := []*StoreType{
+		{
+			headers:  []string{readyHeader, syncedHeader},
+			Families: []*FamilyType{readyFamily, syncedFamily},
+			metrics: map[types.UID][]string{
+				"uid1": {
+					"kube_customresource_ready{group=\"storage.example.org\",kind=\"Bucket\",name=\"bucket\"} 1\n",
+					"kube_customresource_synced{group=\"storage.example.org\",kind=\"Bucket\",name=\"bucket\"} 1\n",
+				},
+			},
+		},
+		{
+			headers:  []string{readyHeader, syncedHeader},
+			Families: []*FamilyType{readyFamily, syncedFamily},
+			metrics: map[types.UID][]string{
+				"uid1": {
+					"kube_customresource_ready{group=\"storage.example.org\",kind=\"BucketPolicy\",name=\"policy\"} 0\n",
+					"kube_customresource_synced{group=\"storage.example.org\",kind=\"BucketPolicy\",name=\"policy\"} 1\n",
+				},
+			},
+		},
+	}
+
+	w := &bytes.Buffer{}
+	if err := newMetricsWriter(stores...).writeStores(w); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := readyHeader + "\n" +
+		"kube_customresource_ready{group=\"storage.example.org\",kind=\"Bucket\",name=\"bucket\"} 1\n" +
+		"kube_customresource_ready{group=\"storage.example.org\",kind=\"BucketPolicy\",name=\"policy\"} 0\n" +
+		syncedHeader + "\n" +
+		"kube_customresource_synced{group=\"storage.example.org\",kind=\"Bucket\",name=\"bucket\"} 1\n" +
+		"kube_customresource_synced{group=\"storage.example.org\",kind=\"BucketPolicy\",name=\"policy\"} 1\n"
+
+	if got := w.String(); got != expected {
+		t.Fatalf("%s", cmp.Diff(got, expected))
+	}
+}
+
 func TestMetricsWriter_writeStores_dedupHeader(t *testing.T) {
 	t.Parallel()
 
-	header := familyProbeHeader()
-	counterHeader := familyProbeCounterHeader()
-	counterFamily := FamilyType{Family: v1alpha1.Family{Name: "probe_sets_total"}, createdAt: time.Unix(1, 500000000)}
+	header := familyHeader("kube_customresource_probe", "Ready status", "gauge")
+	counterHeader := familyHeader("kube_customresource_probe_sets_total", "Sets total", "counter")
+	counterFamily := familyFor("probe_sets_total", time.Unix(1, 500000000))
 
 	tests := []struct {
 		name     string
@@ -143,13 +195,15 @@ func TestMetricsWriter_writeStores_dedupHeader(t *testing.T) {
 			name: "same family in two stores gets its header once",
 			stores: []*StoreType{
 				{
-					headers: []string{header},
+					headers:  []string{header},
+					Families: []*FamilyType{familyFor("probe", time.Time{})},
 					metrics: map[types.UID][]string{
 						"uid1": {"kube_customresource_probe{kind=\"ProviderConfig\"} 0\n"},
 					},
 				},
 				{
-					headers: []string{header},
+					headers:  []string{header},
+					Families: []*FamilyType{familyFor("probe", time.Time{})},
 					metrics: map[types.UID][]string{
 						"uid1": {"kube_customresource_probe{kind=\"ProviderConfigUsage\"} 1\n"},
 					},
@@ -163,13 +217,15 @@ func TestMetricsWriter_writeStores_dedupHeader(t *testing.T) {
 			name: "different families across stores keep their own headers",
 			stores: []*StoreType{
 				{
-					headers: []string{header},
+					headers:  []string{header},
+					Families: []*FamilyType{familyFor("probe", time.Time{})},
 					metrics: map[types.UID][]string{
 						"uid1": {"kube_customresource_probe{kind=\"K1\"} 1\n"},
 					},
 				},
 				{
-					headers: []string{"# HELP kube_customresource_other Other status\n# TYPE kube_customresource_other gauge"},
+					headers:  []string{"# HELP kube_customresource_other Other status\n# TYPE kube_customresource_other gauge"},
+					Families: []*FamilyType{familyFor("other", time.Time{})},
 					metrics: map[types.UID][]string{
 						"uid1": {"kube_customresource_other{kind=\"K2\"} 2\n"},
 					},
@@ -185,26 +241,26 @@ func TestMetricsWriter_writeStores_dedupHeader(t *testing.T) {
 			name: "counter families share their _created peripheral header only once",
 			stores: []*StoreType{
 				{
-					headers: []string{counterHeader},
+					headers:  []string{counterHeader},
+					Families: []*FamilyType{counterFamily},
 					metrics: map[types.UID][]string{
 						"uid1": {"kube_customresource_probe_sets_total{kind=\"K1\"} 4\n"},
 					},
-					Families: []*FamilyType{&counterFamily},
 				},
 				{
-					headers: []string{counterHeader},
+					headers:  []string{counterHeader},
+					Families: []*FamilyType{counterFamily},
 					metrics: map[types.UID][]string{
 						"uid1": {"kube_customresource_probe_sets_total{kind=\"K2\"} 5\n"},
 					},
-					Families: []*FamilyType{&counterFamily},
 				},
 			},
 			expected: counterHeader + "\n" +
 				"kube_customresource_probe_sets_total{kind=\"K1\"} 4\n" +
+				"kube_customresource_probe_sets_total{kind=\"K2\"} 5\n" +
 				"# HELP kube_customresource_probe_sets_created Time at which kube_customresource_probe_sets_total was created." +
 				"\n# TYPE kube_customresource_probe_sets_created counter\n" +
-				"kube_customresource_probe_sets_created 1.500000\n" +
-				"kube_customresource_probe_sets_total{kind=\"K2\"} 5\n",
+				"kube_customresource_probe_sets_created 1.500000\n",
 		},
 	}
 
@@ -225,61 +281,21 @@ func TestMetricsWriter_writeStores_dedupHeader(t *testing.T) {
 	}
 }
 
-func TestFamilyKey(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		header   string
-		expected string
-	}{
-		{
-			"help header",
-			"# HELP kube_customresource_probe Ready status",
-			"kube_customresource_probe",
-		},
-		{
-			"peripheral header",
-			"# HELP kube_customresource_probe_created Time at which kube_customresource_probe_total was created.",
-			"kube_customresource_probe_created",
-		},
-		{
-			"not a help header",
-			"header1",
-			"header1",
-		},
-		{
-			"empty",
-			"",
-			"",
-		},
-	}
-
-	for i := range tests {
-		tt := tests[i]
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := familyKey(tt.header); got != tt.expected {
-				t.Fatalf("familyKey(%q) = %q, want %q", tt.header, got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestMetricsWriter_exposition_parses(t *testing.T) {
 	t.Parallel()
 
-	header := familyProbeHeader()
+	header := familyHeader("kube_customresource_probe", "Ready status", "gauge")
 	stores := []*StoreType{
 		{
-			headers: []string{header},
+			headers:  []string{header},
+			Families: []*FamilyType{familyFor("probe", time.Time{})},
 			metrics: map[types.UID][]string{
 				"uid1": {"kube_customresource_probe{kind=\"ProviderConfig\",name=\"default\"} 0\n"},
 			},
 		},
 		{
-			headers: []string{header},
+			headers:  []string{header},
+			Families: []*FamilyType{familyFor("probe", time.Time{})},
 			metrics: map[types.UID][]string{
 				"uid1": {"kube_customresource_probe{kind=\"ProviderConfigUsage\",name=\"2631db04\"} 1\n"},
 			},
