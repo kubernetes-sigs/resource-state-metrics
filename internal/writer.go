@@ -50,6 +50,8 @@ func (m *metricsWriter) writeStores(writer io.Writer) error {
 		return nil
 	}
 
+	emittedHeaders := make(map[string]struct{})
+
 	var (
 		familyOrder []string
 		families    = make(map[string][]familySnapshot)
@@ -71,7 +73,7 @@ func (m *metricsWriter) writeStores(writer io.Writer) error {
 	}
 
 	for _, name := range familyOrder {
-		if err := writeFamily(writer, families[name]); err != nil {
+		if err := writeFamily(writer, name, families[name], emittedHeaders); err != nil {
 			return err
 		}
 	}
@@ -108,13 +110,29 @@ func snapshotFamilies(store *StoreType) []familySnapshot {
 	return snapshots
 }
 
+// writeHeaderOnce writes header to writer only when its family was not emitted before,
+// marking the family as emitted so that a shared family header is written only once.
+func writeHeaderOnce(writer io.Writer, familyName, header string, emittedHeaders map[string]struct{}) error {
+	if _, emitted := emittedHeaders[familyName]; emitted {
+		return nil
+	}
+
+	if err := writeHeader(writer, header); err != nil {
+		return fmt.Errorf("error writing header: %w", err)
+	}
+
+	emittedHeaders[familyName] = struct{}{}
+
+	return nil
+}
+
 // writeFamily writes the header of a family once, followed by the samples collected
 // from every store and, for counters, the family's _created peripheral metric.
-func writeFamily(writer io.Writer, snapshots []familySnapshot) error {
+func writeFamily(writer io.Writer, familyName string, snapshots []familySnapshot, emittedHeaders map[string]struct{}) error {
 	first := snapshots[0]
 
-	if err := writeHeader(writer, first.header); err != nil {
-		return fmt.Errorf("error writing header: %w", err)
+	if err := writeHeaderOnce(writer, familyName, first.header, emittedHeaders); err != nil {
+		return err
 	}
 
 	for _, snapshot := range snapshots {
@@ -125,13 +143,12 @@ func writeFamily(writer io.Writer, snapshots []familySnapshot) error {
 		}
 	}
 
-	if peripheral := first.family.buildPeripheralHeader(); peripheral != "" {
-		if err := writeHeader(writer, peripheral); err != nil {
-			return fmt.Errorf("error writing peripheral header: %w", err)
-		}
+	peripheral := first.family.buildPeripheralHeader()
+	if peripheral == "" {
+		return nil
 	}
 
-	return nil
+	return writeHeaderOnce(writer, familyName+"_created", peripheral, emittedHeaders)
 }
 
 func writeHeader(writer io.Writer, header string) error {
