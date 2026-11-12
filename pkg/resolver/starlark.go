@@ -17,6 +17,7 @@ limitations under the License.
 package resolver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -24,9 +25,7 @@ import (
 
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/metricutil"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/options"
-	startime "go.starlark.net/lib/time"
 	"go.starlark.net/starlark"
-	"go.starlark.net/syntax"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/klog/v2"
 )
@@ -81,86 +80,19 @@ func NewStarlarkResolver(logger klog.Logger, script string, timeout time.Duratio
 }
 
 // Resolve executes the Starlark script with the given object and returns resolved families.
-// NOTE: The following "go.starlark.net/syntax.FileOptions" are enabled for "go.starlark.net/starlark.ExecFileOptions" (script execution):
-// * `GlobalReassign`: Allow reassigning global variables in the script.
-// * `Set`: Allow using the `set` statement in the script.
-// * `TopLevelControl`: Allow using control flow statements (if, for, while) at the top level of the script.
-// * `While`: Allow using `while` loops in the script.
+// Resolve is kept for the old callers until the wrapper moves to Compile and Eval.
 func (sr *StarlarkResolver) Resolve(obj map[string]interface{}) ([]ResolvedFamily, error) {
-	type result struct {
-		families []ResolvedFamily
-		err      error
+	script, err := sr.compile(sr.script)
+	if err != nil {
+		return nil, err
 	}
 
-	thread := &starlark.Thread{
-		Name: "resource-state-metrics-starlark",
-		Print: func(_ *starlark.Thread, msg string) {
-			sr.logger.V(2).Info("Starlark printer", "message", msg)
-		},
-	}
-	if sr.maxSteps > 0 {
-		thread.SetMaxExecutionSteps(uint64(sr.maxSteps))
-	}
-
-	resultChan := make(chan result, 1)
-
-	go func() {
-		families, err := sr.resolveWithSteps(thread, obj)
-		resultChan <- result{families: families, err: err}
-	}()
-
-	timer := time.NewTimer(sr.timeout)
-	defer timer.Stop()
-
-	select {
-	case res := <-resultChan:
-		return res.families, res.err
-	case <-timer.C:
-		thread.Cancel("timeout exceeded")
-
+	families, err := script.Eval(context.Background(), obj)
+	if errors.Is(err, context.DeadlineExceeded) {
 		return nil, fmt.Errorf("starlark script exceeded timeout of %v", sr.timeout)
 	}
-}
 
-func (sr *StarlarkResolver) resolveWithSteps(thread *starlark.Thread, obj map[string]interface{}) ([]ResolvedFamily, error) {
-	predeclared := starlark.StringDict{
-		"quantity_to_float": starlark.NewBuiltin("quantity_to_float", quantityToFloat),
-		"metric":            starlark.NewBuiltin("metric", metricBuiltin),
-		"family":            starlark.NewBuiltin("family", familyBuiltin),
-		"label_prefix":      starlark.NewBuiltin("label_prefix", labelPrefixBuiltin),
-		// time module provides time.now(), time.parse_time(s), durations, etc.
-		// See https://github.com/google/starlark-go/blob/master/lib/time/time.go.
-		"time": startime.Module,
-	}
-
-	objValue, err := goToStarlark(obj)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert object to Starlark: %w", err)
-	}
-
-	predeclared["obj"] = objValue
-
-	globals, err := starlark.ExecFileOptions(&syntax.FileOptions{
-		GlobalReassign:  true,
-		Set:             true,
-		TopLevelControl: true,
-		While:           true,
-	}, thread, "script.star", sr.script, predeclared)
-	if err != nil {
-		var evalErr *starlark.EvalError
-		if errors.As(err, &evalErr) {
-			return nil, fmt.Errorf("starlark execution error: %s", evalErr.Backtrace())
-		}
-
-		return nil, fmt.Errorf("starlark execution error: %w", err)
-	}
-
-	familiesVar, ok := globals["families"]
-	if !ok {
-		return nil, errors.New("starlark script must define a 'families' variable")
-	}
-
-	return extractFamilies(familiesVar)
+	return families, err
 }
 
 // quantityToFloat parses a Kubernetes Quantity string and returns its float value.
