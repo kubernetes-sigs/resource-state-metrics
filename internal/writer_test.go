@@ -401,3 +401,96 @@ func TestMetricsWriter_createdUsesEarliestCreationTime(t *testing.T) {
 		t.Fatalf("expected the merged family to use the earliest creation time, got %d occurrences in %q", n, out)
 	}
 }
+
+func TestMetricsWriter_createdMetricSkippedWhenNameIsUsedByFamily(t *testing.T) {
+	t.Parallel()
+
+	counterHeader := familyHeader("kube_customresource_probe_sets_total", "Sets total", "counter")
+	gaugeHeader := familyHeader("kube_customresource_probe_sets_created", "A real family with that name", "gauge")
+
+	stores := []*StoreType{
+		{
+			headers:  []string{counterHeader},
+			Families: []*FamilyType{familyFor("probe_sets_total", time.Unix(1, 500000000))},
+			metrics: map[types.UID][]string{
+				"uid1": {"kube_customresource_probe_sets_total{kind=\"K1\"} 4\n"},
+			},
+		},
+		{
+			headers:  []string{gaugeHeader},
+			Families: []*FamilyType{familyFor("probe_sets_created", time.Time{})},
+			metrics: map[types.UID][]string{
+				"uid1": {"kube_customresource_probe_sets_created{kind=\"K2\"} 7\n"},
+			},
+		},
+	}
+
+	w := &bytes.Buffer{}
+	if err := newMetricsWriter(stores...).writeStores(w); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := w.String()
+	if strings.Contains(out, "Time at which kube_customresource_probe_sets_total was created.") {
+		t.Fatalf("expected the synthetic _created metric to be skipped, got %q", out)
+	}
+
+	if n := strings.Count(out, "# HELP kube_customresource_probe_sets_created "); n != 1 {
+		t.Fatalf("expected the real family's header to be written once, got %d in %q", n, out)
+	}
+
+	tp := expfmt.NewTextParser(model.LegacyValidation)
+
+	if _, err := tp.TextToMetricFamilies(strings.NewReader(out)); err != nil {
+		t.Fatalf("generated exposition does not parse: %v\n%s", err, out)
+	}
+}
+
+func TestMetricsWriter_helpConflictUsesFirstStoreHeader(t *testing.T) {
+	t.Parallel()
+
+	firstHeader := familyHeader("kube_customresource_probe", "First help text", "gauge")
+	secondHeader := familyHeader("kube_customresource_probe", "Second help text", "gauge")
+
+	stores := []*StoreType{
+		{
+			headers:  []string{firstHeader},
+			Families: []*FamilyType{familyFor("probe", time.Time{})},
+			metrics: map[types.UID][]string{
+				"uid1": {"kube_customresource_probe{kind=\"K1\"} 1\n"},
+			},
+		},
+		{
+			headers:  []string{secondHeader},
+			Families: []*FamilyType{familyFor("probe", time.Time{})},
+			metrics: map[types.UID][]string{
+				"uid1": {"kube_customresource_probe{kind=\"K2\"} 2\n"},
+			},
+		},
+	}
+
+	w := &bytes.Buffer{}
+	if err := newMetricsWriter(stores...).writeStores(w); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := w.String()
+	if n := strings.Count(out, "# HELP kube_customresource_probe "); n != 1 {
+		t.Fatalf("expected exactly one HELP header, got %d in %q", n, out)
+	}
+
+	if !strings.Contains(out, "First help text") || strings.Contains(out, "Second help text") {
+		t.Fatalf("expected the first store's help text to win, got %q", out)
+	}
+
+	tp := expfmt.NewTextParser(model.LegacyValidation)
+
+	mfs, err := tp.TextToMetricFamilies(strings.NewReader(out))
+	if err != nil {
+		t.Fatalf("generated exposition does not parse: %v\n%s", err, out)
+	}
+
+	if len(mfs["kube_customresource_probe"].GetMetric()) != 2 {
+		t.Fatalf("expected both stores' samples in one family, got %q", out)
+	}
+}

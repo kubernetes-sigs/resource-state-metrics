@@ -45,7 +45,11 @@ type familySnapshot struct {
 // writeStores writes out metrics from the underlying stores to the given writer, per resource.
 // It writes metrics so that the ones with the same name are grouped together when written out, and guarantees an exposition format that is safe to be ingested by Prometheus.
 // Families shared by multiple stores, e.g. when a wildcard store expands to several kinds, get their
-// HELP/TYPE header only once and all of their samples are written together in store order.
+// HELP/TYPE header only once and all of their samples are written together in store order. When the
+// stores disagree on the HELP text of a shared family, the header of the first store is written and
+// the configuration conflict is reported by the configurer.
+// A counter family's synthetic _created metric is skipped when its published name is already used by
+// a configured family, so that it cannot override that family's HELP/TYPE.
 func (m *metricsWriter) writeStores(writer io.Writer) error {
 	if len(m.stores) == 0 {
 		return nil
@@ -73,13 +77,34 @@ func (m *metricsWriter) writeStores(writer io.Writer) error {
 		}
 	}
 
+	skipCreated := skippedCreatedNames(families)
+
 	for _, name := range familyOrder {
-		if err := writeFamily(writer, name, families[name], emittedHeaders); err != nil {
+		if err := writeFamily(writer, name, families[name], emittedHeaders, skipCreated); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// skippedCreatedNames returns the counter families whose synthetic _created metric name is
+// already used by another configured family. Emitting the synthetic metric would either
+// suppress the real family's HELP/TYPE or attach its samples to the wrong family.
+func skippedCreatedNames(families map[string][]familySnapshot) map[string]struct{} {
+	skipped := make(map[string]struct{})
+
+	for name := range families {
+		if !strings.HasSuffix(name, "_total") {
+			continue
+		}
+
+		if _, used := families[strings.TrimSuffix(name, "_total")+"_created"]; used {
+			skipped[name] = struct{}{}
+		}
+	}
+
+	return skipped
 }
 
 // snapshotFamilies copies the headers, metric samples and family metadata of a store
@@ -143,7 +168,7 @@ func earliestFamily(snapshots []familySnapshot) *familySnapshot {
 
 // writeFamily writes the header of a family once, followed by the samples collected
 // from every store and, for counters, the family's _created peripheral metric.
-func writeFamily(writer io.Writer, familyName string, snapshots []familySnapshot, emittedHeaders map[string]struct{}) error {
+func writeFamily(writer io.Writer, familyName string, snapshots []familySnapshot, emittedHeaders, skipCreated map[string]struct{}) error {
 	first := snapshots[0]
 
 	if err := writeHeaderOnce(writer, familyName, first.header, emittedHeaders); err != nil {
@@ -156,6 +181,10 @@ func writeFamily(writer io.Writer, familyName string, snapshots []familySnapshot
 				return err
 			}
 		}
+	}
+
+	if _, skip := skipCreated[familyName]; skip {
+		return nil
 	}
 
 	// Stores sharing a family are built separately, so their createdAt values can
