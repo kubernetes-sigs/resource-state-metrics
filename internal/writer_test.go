@@ -368,3 +368,36 @@ func TestMetricsWriter_createdHeaderDoesNotCollideWithFamilyName(t *testing.T) {
 		t.Fatalf("generated exposition does not parse: %v\n%s", err, out)
 	}
 }
+
+func TestMetricsWriter_createdUsesEarliestCreationTime(t *testing.T) {
+	t.Parallel()
+
+	counterHeader := familyHeader("kube_customresource_probe_sets_total", "Sets total", "counter")
+
+	stores := []*StoreType{
+		{
+			headers:  []string{counterHeader},
+			Families: []*FamilyType{familyFor("probe_sets_total", time.Unix(2, 0))},
+			metrics: map[types.UID][]string{
+				"uid1": {"kube_customresource_probe_sets_total{kind=\"K1\"} 4\n"},
+			},
+		},
+		{
+			headers:  []string{counterHeader},
+			Families: []*FamilyType{familyFor("probe_sets_total", time.Unix(1, 500000000))},
+			metrics: map[types.UID][]string{
+				"uid1": {"kube_customresource_probe_sets_total{kind=\"K2\"} 5\n"},
+			},
+		},
+	}
+
+	w := &bytes.Buffer{}
+	if err := newMetricsWriter(stores...).writeStores(w); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := w.String()
+	if n := strings.Count(out, "kube_customresource_probe_sets_created 1.500000"); n != 1 {
+		t.Fatalf("expected the merged family to use the earliest creation time, got %d occurrences in %q", n, out)
+	}
+}

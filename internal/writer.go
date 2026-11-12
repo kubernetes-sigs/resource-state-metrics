@@ -127,6 +127,20 @@ func writeHeaderOnce(writer io.Writer, familyName, header string, emittedHeaders
 	return nil
 }
 
+// earliestFamily returns the snapshot whose family was created first, so that the
+// merged family does not depend on the order in which the stores were written.
+func earliestFamily(snapshots []familySnapshot) *familySnapshot {
+	earliest := &snapshots[0]
+
+	for idx := 1; idx < len(snapshots); idx++ {
+		if snapshots[idx].family.createdAt.Before(earliest.family.createdAt) {
+			earliest = &snapshots[idx]
+		}
+	}
+
+	return earliest
+}
+
 // writeFamily writes the header of a family once, followed by the samples collected
 // from every store and, for counters, the family's _created peripheral metric.
 func writeFamily(writer io.Writer, familyName string, snapshots []familySnapshot, emittedHeaders map[string]struct{}) error {
@@ -144,7 +158,10 @@ func writeFamily(writer io.Writer, familyName string, snapshots []familySnapshot
 		}
 	}
 
-	peripheral := first.family.buildPeripheralHeader()
+	// Stores sharing a family are built separately, so their createdAt values can
+	// differ slightly. Use the earliest one to keep the merged family's creation
+	// time stable and independent of the store order.
+	peripheral := earliestFamily(snapshots).family.buildPeripheralHeader()
 	if peripheral == "" {
 		return nil
 	}
