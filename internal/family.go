@@ -176,7 +176,7 @@ func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) 
 
 			resolverInstance, err := f.resolver(metric.Resolver)
 			if err != nil {
-				logger.V(1).Error(fmt.Errorf("error resolving metric: %w", err), "skipping")
+				logger.Error(fmt.Errorf("error resolving metric: %w", err), "skipping")
 				putBuilder(metricRawBuilder)
 
 				continue
@@ -186,7 +186,7 @@ func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) 
 
 			resolvedValue, ok, err := resolveMetricValue(resolverInstance, metric.Value, unstructured.Object, resolvedExpandedLabelSet)
 			if err != nil {
-				logger.V(1).Error(fmt.Errorf("error resolving metric value %q: %w", metric.Value, err), "skipping")
+				logger.Error(fmt.Errorf("error resolving metric value %q: %w", metric.Value, err), "skipping")
 				putBuilder(metricRawBuilder)
 
 				continue
@@ -200,6 +200,7 @@ func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) 
 
 			samples, err := writeMetricSamplesWithCount(metricRawBuilder, f.Name, f.kind(), unstructured, resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet, resolvedValue, logger)
 			if err != nil {
+				logger.Error(err, "failed to write metric samples, skipping metric")
 				putBuilder(metricRawBuilder)
 
 				continue
@@ -229,7 +230,7 @@ func (f *FamilyType) buildMetricStringFromStarlark(unstr *unstructured.Unstructu
 
 	families, err := f.starlarkResolver.Resolve(unstr.Object)
 	if err != nil {
-		logger.V(1).Error(err, "Starlark generation failed")
+		logger.Error(err, "Starlark generation failed")
 
 		return "", 0
 	}
