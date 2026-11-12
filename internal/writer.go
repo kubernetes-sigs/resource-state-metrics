@@ -18,6 +18,7 @@ package internal
 import (
 	"fmt"
 	"io"
+	"strings"
 )
 
 // metricsWriter writes metrics from a group of stores to an io.Writer.
@@ -148,7 +149,12 @@ func writeFamily(writer io.Writer, familyName string, snapshots []familySnapshot
 		return nil
 	}
 
-	return writeHeaderOnce(writer, familyName+"_created", peripheral, emittedHeaders)
+	// The _created sample is published as <name without the _total suffix>_created,
+	// so the dedup key must use that name and not familyName + "_created", which
+	// would collide with a family that is literally named that way.
+	createdFamilyName := strings.TrimSuffix(familyName, "_total") + "_created"
+
+	return writeHeaderOnce(writer, createdFamilyName, peripheral, emittedHeaders)
 }
 
 func writeHeader(writer io.Writer, header string) error {

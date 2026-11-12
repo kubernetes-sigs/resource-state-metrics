@@ -328,3 +328,43 @@ func TestMetricsWriter_exposition_parses(t *testing.T) {
 		t.Fatalf("expected both stores' samples in one family, got %d", len(mf.GetMetric()))
 	}
 }
+
+func TestMetricsWriter_createdHeaderDoesNotCollideWithFamilyName(t *testing.T) {
+	t.Parallel()
+
+	counterHeader := familyHeader("kube_customresource_store_sets_total", "Sets total", "counter")
+	gaugeHeader := familyHeader("kube_customresource_store_sets_total_created", "Something else", "gauge")
+
+	stores := []*StoreType{
+		{
+			headers:  []string{counterHeader},
+			Families: []*FamilyType{familyFor("store_sets_total", time.Unix(1, 500000000))},
+			metrics: map[types.UID][]string{
+				"uid1": {"kube_customresource_store_sets_total{kind=\"K1\"} 4\n"},
+			},
+		},
+		{
+			headers:  []string{gaugeHeader},
+			Families: []*FamilyType{familyFor("store_sets_total_created", time.Time{})},
+			metrics: map[types.UID][]string{
+				"uid1": {"kube_customresource_store_sets_total_created{kind=\"K2\"} 7\n"},
+			},
+		},
+	}
+
+	w := &bytes.Buffer{}
+	if err := newMetricsWriter(stores...).writeStores(w); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := w.String()
+	if n := strings.Count(out, "# HELP kube_customresource_store_sets_total_created "); n != 1 {
+		t.Fatalf("expected the gauge family header to be written once, got %d in %q", n, out)
+	}
+
+	tp := expfmt.NewTextParser(model.LegacyValidation)
+
+	if _, err := tp.TextToMetricFamilies(strings.NewReader(out)); err != nil {
+		t.Fatalf("generated exposition does not parse: %v\n%s", err, out)
+	}
+}
