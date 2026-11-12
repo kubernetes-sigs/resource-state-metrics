@@ -16,6 +16,8 @@ limitations under the License.
 package resolver
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -156,5 +158,98 @@ func TestUnstructuredResolver_Resolve(t *testing.T) {
 				t.Errorf("%s", cmp.Diff(got, tt.want))
 			}
 		})
+	}
+}
+
+func TestUnstructuredResolver_Compile(t *testing.T) {
+	t.Parallel()
+
+	resolver := NewUnstructuredResolver(klog.NewKlogr())
+
+	for _, expr := range []string{"", "fields..string", ".fields"} {
+		if _, err := resolver.Compile(expr); !errors.Is(err, ErrInvalidExpression) {
+			t.Errorf("Compile(%q) error = %v, want ErrInvalidExpression", expr, err)
+		}
+	}
+
+	if _, err := resolver.Compile("fields.string"); err != nil {
+		t.Errorf("Compile(%q) unexpected error: %v", "fields.string", err)
+	}
+}
+
+func TestUnstructuredResolver_Traits(t *testing.T) {
+	t.Parallel()
+
+	if diff := cmp.Diff(ExpressionTraits{}, NewUnstructuredResolver(klog.NewKlogr()).Traits()); diff != "" {
+		t.Errorf("Traits() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestUnstructuredResolver_Eval(t *testing.T) {
+	t.Parallel()
+
+	obj := map[string]interface{}{
+		"fields": map[string]interface{}{
+			"nil":    nil,
+			"string": "bar",
+			"slice":  []string{"a", "b", "c"},
+			"map":    map[string]interface{}{"foo": "baz"},
+		},
+	}
+	tests := []struct {
+		name      string
+		query     string
+		want      Value
+		wantFound bool
+		wantErr   bool
+	}{
+		{name: "string", query: "fields.string", want: Value{Kind: KindScalar, Scalar: "bar"}, wantFound: true},
+		{name: "nil is the <nil> text", query: "fields.nil", want: Value{Kind: KindScalar, Scalar: "<nil>"}, wantFound: true},
+		{name: "slice is not expanded", query: "fields.slice", want: Value{Kind: KindScalar, Scalar: "[a b c]"}, wantFound: true},
+		{name: "map is not expanded", query: "fields.map", want: Value{Kind: KindScalar, Scalar: "map[foo:baz]"}, wantFound: true},
+		{name: "missing field", query: "fields.missing"},
+		{name: "walking through a string", query: "fields.string.bar", wantErr: true},
+	}
+
+	resolver := NewUnstructuredResolver(klog.NewKlogr())
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			expr, err := resolver.Compile(tt.query)
+			if err != nil {
+				t.Fatalf("Compile(%q) unexpected error: %v", tt.query, err)
+			}
+
+			got, found, err := expr.Eval(t.Context(), obj)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Eval(%q) error = %v, wantErr %v", tt.query, err, tt.wantErr)
+			}
+
+			if found != tt.wantFound {
+				t.Errorf("Eval(%q) found = %v, want %v", tt.query, found, tt.wantFound)
+			}
+
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("Eval(%q) mismatch (-want +got):\n%s", tt.query, diff)
+			}
+		})
+	}
+}
+
+func TestUnstructuredResolver_EvalCancelled(t *testing.T) {
+	t.Parallel()
+
+	expr, err := NewUnstructuredResolver(klog.NewKlogr()).Compile("fields.string")
+	if err != nil {
+		t.Fatalf("Compile unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	if _, _, err := expr.Eval(ctx, map[string]interface{}{}); !errors.Is(err, context.Canceled) {
+		t.Errorf("Eval error = %v, want context.Canceled", err)
 	}
 }
