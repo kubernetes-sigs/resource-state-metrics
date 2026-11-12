@@ -16,6 +16,8 @@ limitations under the License.
 package resolver
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -1035,5 +1037,97 @@ families = [family(name="test", help="test", kind="gauge", samples=samples)]
 
 	if !strings.Contains(err.Error(), "invalid quantity") && !strings.Contains(err.Error(), "quantity") {
 		t.Fatalf("error = %q, want quantity-related failure", err)
+	}
+}
+
+func TestStarlarkResolver_Compile(t *testing.T) {
+	t.Parallel()
+
+	sr := NewStarlarkResolver(klog.NewKlogr(), "", 5*time.Second, 1000)
+
+	if _, err := sr.Compile("families = ["); !errors.Is(err, ErrInvalidExpression) {
+		t.Errorf("Compile of a bad script error = %v, want ErrInvalidExpression", err)
+	}
+
+	if _, err := sr.Compile("families = []"); err != nil {
+		t.Errorf("Compile unexpected error: %v", err)
+	}
+}
+
+func TestStarlarkResolver_Traits(t *testing.T) {
+	t.Parallel()
+
+	want := Traits{
+		ObjectBinding: "obj",
+		Sanitization:  SanitizationSpec{LabelKeys: true},
+		Bounds:        BoundsSpec{Timeout: true, StepLimit: true},
+	}
+
+	sr := NewStarlarkResolver(klog.NewKlogr(), "", 5*time.Second, 1000)
+	if diff := cmp.Diff(want, sr.Traits()); diff != "" {
+		t.Errorf("Traits() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestStarlarkResolver_Eval(t *testing.T) {
+	t.Parallel()
+
+	script := `
+families = [
+    family(name="bars", help="Bars", kind="gauge", samples=[metric(labels={"name": obj["metadata"]["name"]}, value=1.0)]),
+]
+`
+	sr := NewStarlarkResolver(klog.NewKlogr(), "", 5*time.Second, 100000)
+
+	compiled, err := sr.Compile(script)
+	if err != nil {
+		t.Fatalf("Compile unexpected error: %v", err)
+	}
+
+	obj := map[string]interface{}{"metadata": map[string]interface{}{"name": "one"}}
+
+	families, err := compiled.Eval(t.Context(), obj)
+	if err != nil {
+		t.Fatalf("Eval unexpected error: %v", err)
+	}
+
+	want := []ResolvedFamily{{
+		Name:    "bars",
+		Help:    "Bars",
+		Kind:    "gauge",
+		Samples: []ResolvedSample{{Labels: map[string]string{"name": "one"}, Value: 1.0}},
+	}}
+	if diff := cmp.Diff(want, families); diff != "" {
+		t.Errorf("Eval mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestStarlarkResolver_EvalStepLimit(t *testing.T) {
+	t.Parallel()
+
+	sr := NewStarlarkResolver(klog.NewKlogr(), "", 5*time.Second, 1000)
+
+	compiled, err := sr.Compile("x = 0\nfor i in range(100000):\n    x = x + 1\nfamilies = []\n")
+	if err != nil {
+		t.Fatalf("Compile unexpected error: %v", err)
+	}
+
+	if _, err := compiled.Eval(t.Context(), map[string]interface{}{}); !errors.Is(err, ErrBudgetExceeded) {
+		t.Errorf("Eval error = %v, want ErrBudgetExceeded", err)
+	}
+}
+
+func TestStarlarkResolver_EvalTimeout(t *testing.T) {
+	t.Parallel()
+
+	sr := NewStarlarkResolver(klog.NewKlogr(), "", 100*time.Millisecond, 100000000)
+
+	compiled, err := sr.Compile("while True:\n    pass\nfamilies = []\n")
+	if err != nil {
+		t.Fatalf("Compile unexpected error: %v", err)
+	}
+
+	if _, err := compiled.Eval(t.Context(), map[string]interface{}{}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Eval error = %v, want context.DeadlineExceeded", err)
 	}
 }
