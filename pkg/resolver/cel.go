@@ -103,45 +103,37 @@ func (ce costEstimator) CallCost(function string, _ string, _ []ref.Val, _ ref.V
 func (cr *CELResolver) Resolve(query string, unstructuredObjectMap map[string]interface{}) map[string]string {
 	logger := cr.logger.WithValues("query", query)
 
-	type result struct {
-		output map[string]string
-		err    error
-	}
-
-	resultChan := make(chan result, 1)
-
-	ctx, cancel := context.WithTimeout(context.Background(), cr.timeout)
-	defer cancel()
-
-	go func() {
-		output, err := cr.resolveWithTimeout(ctx, query, unstructuredObjectMap, logger)
-		resultChan <- result{output: output, err: err}
-	}()
-
-	select {
-	case res := <-resultChan:
-		if res.err != nil {
-			if errors.Is(res.err, context.DeadlineExceeded) {
-				return cr.timedOut(query, logger)
-			}
-
-			logger.V(1).Info("ignoring resolution for query", "info", res.err)
-
-			if cr.expressionEvaluationMetric != nil {
-				cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "error").Inc()
-			}
-
-			return cr.defaultMapping(query)
-		}
+	expr, err := cr.compile(query)
+	if err != nil {
+		logger.Error(err, "ignoring resolution for query")
 
 		if cr.expressionEvaluationMetric != nil {
-			cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "success").Inc()
+			cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "error").Inc()
 		}
 
-		return res.output
-	case <-ctx.Done():
+		return cr.defaultMapping(query)
+	}
+
+	out, err := expr.eval(context.Background(), unstructuredObjectMap)
+	if errors.Is(err, context.DeadlineExceeded) {
 		return cr.timedOut(query, logger)
 	}
+
+	if err != nil {
+		logger.V(1).Info("ignoring resolution for query", "info", err)
+
+		if cr.expressionEvaluationMetric != nil {
+			cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "error").Inc()
+		}
+
+		return cr.defaultMapping(query)
+	}
+
+	if cr.expressionEvaluationMetric != nil {
+		cr.expressionEvaluationMetric.WithLabelValues(cr.managedRMMNamespace, cr.managedRMMName, cr.familyName, "success").Inc()
+	}
+
+	return cr.processResult(query, out)
 }
 
 func (cr *CELResolver) timedOut(query string, logger klog.Logger) map[string]string {
@@ -152,38 +144,6 @@ func (cr *CELResolver) timedOut(query string, logger klog.Logger) map[string]str
 	}
 
 	return cr.defaultMapping(query)
-}
-
-func (cr *CELResolver) resolveWithTimeout(ctx context.Context, query string, unstructuredObjectMap map[string]interface{}, logger klog.Logger) (map[string]string, error) {
-	env, err := getCELEnv()
-	if err != nil {
-		logger.Error(err, "ignoring resolution for query")
-
-		return nil, err
-	}
-
-	ast, iss := env.Parse(query)
-	if iss.Err() != nil {
-		logger.Error(fmt.Errorf("error parsing CEL query: %w", iss.Err()), "ignoring resolution for query")
-
-		return nil, iss.Err()
-	}
-
-	program, err := cr.compileProgram(env, ast)
-	if err != nil {
-		logger.Error(err, "ignoring resolution for query")
-
-		return nil, err
-	}
-
-	out, evalDetails, err := cr.evaluateProgram(ctx, program, unstructuredObjectMap)
-	cr.addCostLogging(logger, evalDetails)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return cr.processResult(query, out), nil
 }
 
 var (

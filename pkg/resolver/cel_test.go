@@ -504,17 +504,21 @@ func TestCELResolver_CancelStopsEvaluation(t *testing.T) {
 	}
 
 	obj := map[string]interface{}{"items": items}
-	query := "o.items.all(a, o.items.all(b, o.items.all(c, c >= 0)))"
 	cr := NewCELResolver(klog.NewKlogr(), math.MaxUint64, time.Minute, nil, "test-ns", "test-rmm", "test-family")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	expr, err := cr.Compile("o.items.all(a, o.items.all(b, o.items.all(c, c >= 0)))")
+	if err != nil {
+		t.Fatalf("Compile unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 
 	done := make(chan error, 1)
 
 	go func() {
-		_, err := cr.resolveWithTimeout(ctx, query, obj, klog.NewKlogr())
-		done <- err
+		_, _, evalErr := expr.Eval(ctx, obj)
+		done <- evalErr
 	}()
 
 	select {
@@ -524,5 +528,116 @@ func TestCELResolver_CancelStopsEvaluation(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("evaluation kept running after the context was cancelled")
+	}
+}
+
+func TestCELResolver_Compile(t *testing.T) {
+	t.Parallel()
+
+	cr := NewCELResolver(klog.NewKlogr(), 10e5, time.Second, nil, "test-ns", "test-rmm", "test-family")
+
+	if _, err := cr.Compile("o.spec.replicas +"); !errors.Is(err, ErrInvalidExpression) {
+		t.Errorf("Compile of a bad expression error = %v, want ErrInvalidExpression", err)
+	}
+
+	if _, err := cr.Compile("o.spec.replicas"); err != nil {
+		t.Errorf("Compile unexpected error: %v", err)
+	}
+}
+
+func TestCELResolver_Traits(t *testing.T) {
+	t.Parallel()
+
+	want := ExpressionTraits{
+		Traits: Traits{
+			ObjectBinding: "o",
+			Sanitization:  SanitizationSpec{LabelKeys: true},
+			Bounds:        BoundsSpec{Timeout: true, CostLimit: true},
+		},
+		Lists: true,
+		Maps:  true,
+	}
+
+	cr := NewCELResolver(klog.NewKlogr(), 10e5, time.Second, nil, "test-ns", "test-rmm", "test-family")
+	if diff := cmp.Diff(want, cr.Traits()); diff != "" {
+		t.Errorf("Traits() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestCELResolver_Eval(t *testing.T) {
+	t.Parallel()
+
+	obj := map[string]interface{}{
+		"spec": map[string]interface{}{
+			"name":     "bar",
+			"replicas": 3,
+			"ready":    true,
+			"owner":    nil,
+			"tags":     []interface{}{"a", "b"},
+			"props": map[string]interface{}{
+				"plain": "x",
+				"inner": map[string]interface{}{"k": "v"},
+				"items": []interface{}{"1", "2"},
+			},
+		},
+	}
+	scalar := func(s string) Value { return Value{Kind: KindScalar, Scalar: s} }
+	tests := []struct {
+		name      string
+		query     string
+		want      Value
+		wantFound bool
+		wantErr   error
+	}{
+		{name: "string", query: "o.spec.name", want: scalar("bar"), wantFound: true},
+		{name: "int", query: "o.spec.replicas", want: scalar("3"), wantFound: true},
+		{name: "bool", query: "o.spec.ready", want: scalar("true"), wantFound: true},
+		{name: "null", query: "o.spec.owner", want: scalar("<nil>"), wantFound: true},
+		{name: "list", query: "o.spec.tags", want: Value{Kind: KindList, List: []Value{scalar("a"), scalar("b")}}, wantFound: true},
+		{name: "list from map call", query: "o.spec.tags.map(t, t + '!')", want: Value{Kind: KindList, List: []Value{scalar("a!"), scalar("b!")}}, wantFound: true},
+		{
+			name:  "nested map",
+			query: "o.spec.props",
+			want: Value{Kind: KindMap, Map: map[string]Value{
+				"plain": scalar("x"),
+				"inner": {Kind: KindMap, Map: map[string]Value{"k": scalar("v")}},
+				"items": {Kind: KindList, List: []Value{scalar("1"), scalar("2")}},
+			}},
+			wantFound: true,
+		},
+		{name: "label prefix map", query: "labelPrefix({'a': 'b'}, 'p_')", want: Value{Kind: KindMap, Map: map[string]Value{"p_a": scalar("b")}}, wantFound: true},
+		{name: "missing field", query: "o.spec.missing"},
+		{name: "cost limit", query: "o.spec.tags.map(t, o.spec.tags.map(u, t + u))", wantErr: ErrBudgetExceeded},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			costLimit := uint64(10e5)
+			if test.wantErr != nil {
+				costLimit = 1
+			}
+
+			cr := NewCELResolver(klog.NewKlogr(), costLimit, time.Second, nil, "test-ns", "test-rmm", "test-family")
+
+			expr, err := cr.Compile(test.query)
+			if err != nil {
+				t.Fatalf("Compile(%q) unexpected error: %v", test.query, err)
+			}
+
+			got, found, err := expr.Eval(t.Context(), obj)
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("Eval(%q) error = %v, want %v", test.query, err, test.wantErr)
+			}
+
+			if found != test.wantFound {
+				t.Errorf("Eval(%q) found = %v, want %v", test.query, found, test.wantFound)
+			}
+
+			if diff := cmp.Diff(test.want, got); diff != "" {
+				t.Errorf("Eval(%q) mismatch (-want +got):\n%s", test.query, diff)
+			}
+		})
 	}
 }
