@@ -35,3 +35,18 @@ type Value struct {
 	List   []Value
 	Map    map[string]Value
 }
+
+// String names the kind for logs and errors.
+func (k Kind) String() string {
+	switch k {
+	case KindScalar:
+		return "scalar"
+	case KindList:
+		return "list"
+	case KindMap:
+		return "map"
+	case KindInvalid:
+	}
+
+	return "invalid"
+}

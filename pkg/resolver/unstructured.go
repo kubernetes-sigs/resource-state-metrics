@@ -19,6 +19,7 @@ package resolver
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -43,6 +44,10 @@ func NewUnstructuredResolver(logger klog.Logger) *UnstructuredResolver {
 
 // Compile splits the dotted path once and rejects an empty path or an empty segment.
 func (ur *UnstructuredResolver) Compile(expr string) (Expression, error) {
+	if _, err := strconv.ParseFloat(expr, 64); err == nil {
+		return constantExpression{value: expr}, nil
+	}
+
 	path := strings.Split(expr, ".")
 	for _, segment := range path {
 		if segment == "" {
@@ -61,6 +66,16 @@ func (ur *UnstructuredResolver) Traits() ExpressionTraits {
 // unstructuredExpression is a compiled dotted path.
 type unstructuredExpression struct {
 	path []string
+}
+
+// constantExpression is a numeric literal used as a metric value, which a dotted path can never be.
+type constantExpression struct {
+	value string
+}
+
+// Eval returns the literal for every object.
+func (ce constantExpression) Eval(_ context.Context, _ map[string]any) (Value, bool, error) {
+	return Value{Kind: KindScalar, Scalar: ce.value}, true, nil
 }
 
 // Eval walks the path and returns the field as a scalar, using the %v string for a list or a map.
