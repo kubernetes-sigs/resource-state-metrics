@@ -88,6 +88,13 @@ func buildStore(
 		family.celEvaluations = celEvaluations
 		family.managedRMMNamespace = namespace
 		family.managedRMMName = name
+
+		if family.Resolver == v1alpha1.ResolverTypeNone {
+			family.Resolver = resolver
+		}
+
+		family.Labels = append(family.Labels, labels...)
+		family.compile()
 	}
 
 	headers := buildMetricHeaders(metricFamilies)
