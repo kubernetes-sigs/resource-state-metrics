@@ -1,0 +1,63 @@
+---
+# Copyright 2026 The Kubernetes resource-state-metrics Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+name: resourcemetricsmonitor-bars-nested-map
+description: >
+  Tests how a map with nested values is flattened when it is expanded through
+  the "_" label. Scalar entries and the entries of a nested map become labels
+  with snake_case keys, the nested list becomes the values of the "_" label
+  itself, one sample per item, and the names of the nested containers,
+  compositeMap and compositeArray, are not kept. An empty map, as on
+  test-sample-secondary, produces no sample.
+in:
+  apiVersion: resource-state-metrics.instrumentation.k8s-sigs.io/v1alpha1
+  kind: ResourceMetricsMonitor
+  metadata:
+    name: resourcemetricsmonitor-bars-nested-map
+    namespace: default
+  spec:
+    configuration:
+      stores:
+        - group: "samplecontroller.k8s.io"
+          version: "v1beta1"
+          kind: "Bar"
+          resource: "bars"
+          families:
+            - name: "bars_xprops"
+              help: "Flattened xProps of each Bar"
+              metrics:
+                - resolver: "cel"
+                  labels:
+                    - name: "_"
+                      value: "o.spec.xProps"
+                  value: "1"
+metrics:
+  - "# HELP kube_customresource_bars_xprops Flattened xProps of each Bar"
+  - "# TYPE kube_customresource_bars_xprops gauge"
+  - 'kube_customresource_bars_xprops{key_1="value1",key_2="value2",non_composite="example-value",_="value1",group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample",namespace="default"} 1.000000'
+  - 'kube_customresource_bars_xprops{key_1="value1",key_2="value2",non_composite="example-value",_="value2",group="samplecontroller.k8s.io",version="v1beta1",kind="Bar",name="test-sample",namespace="default"} 1.000000'
+status:
+  cardinality:
+    total: 2
+    thresholdsExceeded: false
+  conditions:
+    - type: Processed
+      status: "True"
+      reason: EventHandlerSucceeded
+    - type: CardinalityCutoff
+      status: "False"
+      reason: CardinalityOK
+    - type: CardinalityWarning
+      status: "False"
+      reason: CardinalityOK
