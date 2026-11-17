@@ -70,6 +70,7 @@ type metrics struct {
 	resourcesMonitored       *prometheus.GaugeVec
 	eventsProcessed          *prometheus.CounterVec
 	celEvaluations           *prometheus.CounterVec
+	resolverEvaluations      *prometheus.CounterVec
 	familyCardinality        *prometheus.GaugeVec
 	familyCardinalityLimit   *prometheus.GaugeVec
 	storeCardinality         *prometheus.GaugeVec
@@ -195,8 +196,14 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 	c.celEvaluations = promauto.With(registry).NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
 		Name:      "cel_evaluations_total",
-		Help:      "Total number of CEL expression evaluations by result.",
+		Help:      "Total number of CEL expression evaluations by result. Deprecated, use resolver_evaluations_total with resolver=\"cel\", this alias goes away in the next release.",
 	}, []string{"namespace", "name", "family", "result"})
+
+	c.resolverEvaluations = promauto.With(registry).NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "resolver_evaluations_total",
+		Help:      "Total number of expression evaluations by resolver and result.",
+	}, []string{"namespace", "name", "family", "resolver", "result"})
 
 	c.familyCardinality = promauto.With(registry).NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: namespace,

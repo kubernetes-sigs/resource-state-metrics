@@ -40,9 +40,9 @@
             alert: 'ResourceStateMetricsCELEvaluationErrors',
             expr: |||
               (
-                sum by (%(clusterLabel)s) (rate(resource_state_metrics_cel_evaluations_total{%(resourceStateMetricsSelector)s, result="error"}[5m]))
+                sum by (%(clusterLabel)s) (rate(resource_state_metrics_resolver_evaluations_total{%(resourceStateMetricsSelector)s, resolver="cel", result="error"}[5m]))
                 /
-                sum by (%(clusterLabel)s) (rate(resource_state_metrics_cel_evaluations_total{%(resourceStateMetricsSelector)s}[5m]))
+                sum by (%(clusterLabel)s) (rate(resource_state_metrics_resolver_evaluations_total{%(resourceStateMetricsSelector)s, resolver="cel"}[5m]))
               ) > 0.1
             ||| % $._config,
             'for': '15m',
@@ -57,7 +57,7 @@
           {
             alert: 'ResourceStateMetricsCELEvaluationTimeouts',
             expr: |||
-              sum by (%(clusterLabel)s) (rate(resource_state_metrics_cel_evaluations_total{%(resourceStateMetricsSelector)s, result="timeout"}[5m])) > 0
+              sum by (%(clusterLabel)s) (rate(resource_state_metrics_resolver_evaluations_total{%(resourceStateMetricsSelector)s, resolver="cel", result="timeout"}[5m])) > 0
             ||| % $._config,
             'for': '15m',
             labels: {
