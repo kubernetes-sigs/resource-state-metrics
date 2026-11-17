@@ -141,6 +141,7 @@ func (c *Controller) processAddOrUpdate(ctx context.Context, stores *sync.Map, _
 		*c.options.CELCostLimit,
 		time.Duration(*c.options.CELTimeout)*time.Second,
 		c.celEvaluations,
+		c.resolverEvaluations,
 		*c.options.ResourceCardinalityDefault,
 		*c.options.CardinalityWarningRatio,
 		time.Duration(*c.options.StarlarkTimeout)*time.Second,

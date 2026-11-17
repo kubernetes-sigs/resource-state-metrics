@@ -106,6 +106,7 @@ type FamilyType struct {
 	celCostLimit        uint64
 	celTimeout          time.Duration
 	celEvaluations      *prometheus.CounterVec
+	resolverEvaluations *prometheus.CounterVec
 	managedRMMNamespace string
 	managedRMMName      string
 	createdAt           time.Time
@@ -230,6 +231,8 @@ func (f *FamilyType) buildMetricStringFromStarlark(unstr *unstructured.Unstructu
 	}
 
 	families, err := f.script.Eval(context.Background(), unstr.Object)
+	f.countEvaluation(v1alpha1.ResolverTypeStarlark, err)
+
 	if err != nil {
 		logger.V(1).Error(err, "Starlark generation failed")
 
