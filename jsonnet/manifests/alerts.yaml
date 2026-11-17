@@ -34,9 +34,9 @@ groups:
       summary: resource-state-metrics CEL expressions are failing.
     expr: |
       (
-        sum by (cluster) (rate(resource_state_metrics_cel_evaluations_total{job="resource-state-metrics", result="error"}[5m]))
+        sum by (cluster) (rate(resource_state_metrics_resolver_evaluations_total{job="resource-state-metrics", resolver="cel", result="error"}[5m]))
         /
-        sum by (cluster) (rate(resource_state_metrics_cel_evaluations_total{job="resource-state-metrics"}[5m]))
+        sum by (cluster) (rate(resource_state_metrics_resolver_evaluations_total{job="resource-state-metrics", resolver="cel"}[5m]))
       ) > 0.1
     for: 15m
     labels:
@@ -46,7 +46,7 @@ groups:
       description: CEL expression evaluations are timing out. Consider increasing the CEL timeout limit or simplifying the expressions.
       summary: resource-state-metrics CEL expressions are timing out.
     expr: |
-      sum by (cluster) (rate(resource_state_metrics_cel_evaluations_total{job="resource-state-metrics", result="timeout"}[5m])) > 0
+      sum by (cluster) (rate(resource_state_metrics_resolver_evaluations_total{job="resource-state-metrics", resolver="cel", result="timeout"}[5m])) > 0
     for: 15m
     labels:
       severity: warning

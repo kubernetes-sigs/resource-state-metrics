@@ -70,6 +70,7 @@ func buildStore(
 	celCostLimit uint64,
 	celTimeout time.Duration,
 	celEvaluations *prometheus.CounterVec,
+	resolverEvaluations *prometheus.CounterVec,
 	namespace, name string,
 	storeCardinalityLimit int64,
 	warningRatio float64,
@@ -86,6 +87,7 @@ func buildStore(
 		family.celCostLimit = celCostLimit
 		family.celTimeout = celTimeout
 		family.celEvaluations = celEvaluations
+		family.resolverEvaluations = resolverEvaluations
 		family.managedRMMNamespace = namespace
 		family.managedRMMName = name
 

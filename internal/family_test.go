@@ -26,6 +26,8 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/resolver"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
 )
@@ -520,5 +522,34 @@ func TestFamilyType_evalValueSkipsFailedCELExpression(t *testing.T) {
 	value, expanded, ok, err := family.evalValue(t.Context(), metric, objWithoutConditions, klog.NewKlogr())
 	if err != nil || ok || value != "" || expanded != nil {
 		t.Errorf("evalValue = (%q, %v, %v, %v), want to skip without a value or an error", value, expanded, ok, err)
+	}
+}
+
+func TestFamilyType_countEvaluation(t *testing.T) {
+	t.Parallel()
+
+	labels := []string{"namespace", "name", "family", "result"}
+	cel := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cel_total", Help: "test"}, labels)
+	all := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "resolver_total", Help: "test"}, append(labels[:3:3], "resolver", "result"))
+	family := &FamilyType{Family: v1alpha1.Family{Name: "bars"}, celEvaluations: cel, resolverEvaluations: all, managedRMMNamespace: "ns", managedRMMName: "rmm"}
+
+	family.countEvaluation(v1alpha1.ResolverTypeCEL, nil)
+	family.countEvaluation(v1alpha1.ResolverTypeCEL, context.DeadlineExceeded)
+	family.countEvaluation(v1alpha1.ResolverTypeStarlark, errors.New("boom"))
+	family.countEvaluation(v1alpha1.ResolverTypeUnstructured, nil)
+
+	checks := map[string]float64{
+		"cel success":          testutil.ToFloat64(all.WithLabelValues("ns", "rmm", "bars", "cel", "success")),
+		"cel timeout":          testutil.ToFloat64(all.WithLabelValues("ns", "rmm", "bars", "cel", "timeout")),
+		"starlark error":       testutil.ToFloat64(all.WithLabelValues("ns", "rmm", "bars", "starlark", "error")),
+		"unstructured success": testutil.ToFloat64(all.WithLabelValues("ns", "rmm", "bars", "unstructured", "success")),
+		"old cel success":      testutil.ToFloat64(cel.WithLabelValues("ns", "rmm", "bars", "success")),
+		"old cel timeout":      testutil.ToFloat64(cel.WithLabelValues("ns", "rmm", "bars", "timeout")),
+		"old cel error":        testutil.ToFloat64(cel.WithLabelValues("ns", "rmm", "bars", "error")),
+	}
+
+	want := map[string]float64{"cel success": 1, "cel timeout": 1, "starlark error": 1, "unstructured success": 1, "old cel success": 1, "old cel timeout": 1, "old cel error": 0}
+	if diff := cmp.Diff(want, checks); diff != "" {
+		t.Errorf("counters mismatch (-want +got):\n%s", diff)
 	}
 }

@@ -312,12 +312,8 @@ func (m compiledMetric) declared(kind resolver.Kind) bool {
 	return false
 }
 
-// countEvaluation increments the CEL evaluation counter for a CEL metric, the way the old Resolve did.
+// countEvaluation increments the resolver evaluation counter, and the deprecated CEL counter for a CEL metric.
 func (f *FamilyType) countEvaluation(kind v1alpha1.ResolverType, err error) {
-	if kind != v1alpha1.ResolverTypeCEL || f.celEvaluations == nil {
-		return
-	}
-
 	result := "success"
 
 	switch {
@@ -327,5 +323,11 @@ func (f *FamilyType) countEvaluation(kind v1alpha1.ResolverType, err error) {
 		result = "error"
 	}
 
-	f.celEvaluations.WithLabelValues(f.managedRMMNamespace, f.managedRMMName, f.Name, result).Inc()
+	if f.resolverEvaluations != nil {
+		f.resolverEvaluations.WithLabelValues(f.managedRMMNamespace, f.managedRMMName, f.Name, string(kind), result).Inc()
+	}
+
+	if kind == v1alpha1.ResolverTypeCEL && f.celEvaluations != nil {
+		f.celEvaluations.WithLabelValues(f.managedRMMNamespace, f.managedRMMName, f.Name, result).Inc()
+	}
 }
