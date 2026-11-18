@@ -31,23 +31,18 @@ to them simply making more sense generally, and will be documented in their
 respective golden configuration files.
 */
 
-package tests
+package fake
 
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/kubernetes-sigs/resource-state-metrics/internal"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
-	"github.com/kubernetes-sigs/resource-state-metrics/tests/framework"
-	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/kubernetes-sigs/resource-state-metrics/tests/fake/framework"
+	"github.com/kubernetes-sigs/resource-state-metrics/tests/testutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -125,71 +120,14 @@ func TestGoldenRules(t *testing.T) {
 	}
 }
 
-// getCRDandNonCRDManifests retrieves all CRD and non-CRD manifest file paths from the specified directories.
-func getCRDandNonCRDManifests(t *testing.T) ([]string, []string, error) {
-	t.Helper()
-
-	manifestDirs := []string{
-		"manifests",
-		"../manifests",
-	}
-
-	// Fake client does not support certain resources OOTB.
-	// Also ignore deployment manifests (deployment.yaml, service.yaml, etc.)
-	ignoredManifestsByPrefix := map[string]struct{}{
-		"cluster-role":    {},
-		"deployment":      {},
-		"service":         {},
-		"service-account": {},
-	}
-
-	var (
-		crdFiles   []string
-		otherFiles []string
-	)
-
-	for _, manifestsDir := range manifestDirs {
-		if _, err := os.Stat(manifestsDir); os.IsNotExist(err) {
-			t.Fatalf("Manifests directory does not exist: %s", manifestsDir)
-		}
-
-		err := filepath.Walk(manifestsDir, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-
-			for ignoredPrefix := range ignoredManifestsByPrefix {
-				if strings.HasPrefix(filepath.Base(path), ignoredPrefix) {
-					return nil
-				}
-			}
-
-			if info.IsDir() || !strings.HasSuffix(path, ".yaml") {
-				return nil
-			}
-
-			// Assume all CRD manifests are prefixed with "custom-resource-definition"
-			if strings.HasPrefix(filepath.Base(path), "custom-resource-definition") {
-				crdFiles = append(crdFiles, path)
-			} else {
-				otherFiles = append(otherFiles, path)
-			}
-
-			return nil
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	return crdFiles, otherFiles, nil
-}
-
 // applyCRDManifests applies only CRD manifests from the manifest directories.
 func applyCRDManifests(ctx context.Context, t *testing.T, f *framework.Framework) error {
 	t.Helper()
 
-	crdFiles, _, err := getCRDandNonCRDManifests(t)
+	crdFiles, _, err := testutil.GetCRDAndCRManifests(
+		[]string{"../manifests", "../../manifests"},
+		[]string{"cluster-role", "deployment", "service", "service-account"},
+	)
 	if err != nil {
 		return fmt.Errorf("failed to get manifest files: %w", err)
 	}
@@ -207,7 +145,10 @@ func applyCRDManifests(ctx context.Context, t *testing.T, f *framework.Framework
 func applyCRManifests(ctx context.Context, t *testing.T, f *framework.Framework) error {
 	t.Helper()
 
-	_, otherFiles, err := getCRDandNonCRDManifests(t)
+	_, otherFiles, err := testutil.GetCRDAndCRManifests(
+		[]string{"../manifests", "../../manifests"},
+		[]string{"cluster-role", "deployment", "service", "service-account"},
+	)
 	if err != nil {
 		return fmt.Errorf("failed to get manifest files: %w", err)
 	}
@@ -225,7 +166,7 @@ func applyCRManifests(ctx context.Context, t *testing.T, f *framework.Framework)
 func testResolver(ctx context.Context, t *testing.T, f *framework.Framework, resolverType v1alpha1.ResolverType) {
 	t.Helper()
 
-	files := framework.GetGoldenRuleFiles([]v1alpha1.ResolverType{resolverType})
+	files := testutil.GetGoldenRuleFiles("../golden", []v1alpha1.ResolverType{resolverType})
 
 	if len(files) == 0 {
 		t.Fatalf("No golden rule files found")
@@ -234,7 +175,7 @@ func testResolver(ctx context.Context, t *testing.T, f *framework.Framework, res
 	}
 
 	for _, file := range files {
-		goldenRules, err := framework.GoldenRulesFromYAML(ctx, file)
+		goldenRules, err := testutil.GoldenRulesFromYAML(ctx, file)
 		if err != nil {
 			t.Fatalf("Failed to load golden rules from %s: %v", file, err)
 		}
@@ -248,7 +189,7 @@ func testResolver(ctx context.Context, t *testing.T, f *framework.Framework, res
 }
 
 // testGoldenRule tests a single golden rule.
-func testGoldenRule(ctx context.Context, t *testing.T, f *framework.Framework, goldenRule *framework.GoldenRule) {
+func testGoldenRule(ctx context.Context, t *testing.T, f *framework.Framework, goldenRule *testutil.GoldenRule) {
 	t.Helper()
 
 	if goldenRule.In == nil {
@@ -258,7 +199,7 @@ func testGoldenRule(ctx context.Context, t *testing.T, f *framework.Framework, g
 	}
 
 	// RMMs are pre-loaded when creating the framework, so only apply non-RMM resources
-	if goldenRule.In != nil && goldenRule.In.GetKind() != framework.ResourceMetricsMonitorKind {
+	if goldenRule.In != nil && goldenRule.In.GetKind() != testutil.ResourceMetricsMonitorKind {
 		_, err := f.ApplyCRUnstructured(ctx, goldenRule.In)
 		if err != nil {
 			t.Fatalf("Failed to apply input resource: %v", err)
@@ -272,78 +213,30 @@ func testGoldenRule(ctx context.Context, t *testing.T, f *framework.Framework, g
 		t.Fatalf("Golden rule has no expected output metrics defined")
 	}
 
-	validateMetricsOutput(t, f, goldenRule.Metrics)
+	if err := f.CompareMainMetrics(goldenRule.Metrics); err != nil {
+		t.Errorf("Metric comparison failed: %v", err)
+	}
 
 	if goldenRule.Status == nil {
 		t.Fatalf("Golden rule has no expected status defined")
 	}
 
-	validateStatusOutput(ctx, t, f, goldenRule)
-}
-
-// validateStatusOutput validates the RMM status after reconciliation using cmp.Diff.
-// It polls until the expected status matches because the cardinality status is
-// updated asynchronously by a background goroutine after the Processed condition is set.
-func validateStatusOutput(ctx context.Context, t *testing.T, f *framework.Framework, goldenRule *framework.GoldenRule) {
-	t.Helper()
-
-	opts := cmp.Options{
-		cmpopts.IgnoreFields(v1alpha1.CardinalityStatus{}, "PerStore", "PerFamily", "CutoffFamilies", "LastUpdated"),
-		cmpopts.IgnoreFields(metav1.Condition{}, "LastTransitionTime", "ObservedGeneration", "Message"),
-	}
-
-	var lastDiff string
-
-	pollCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	ticker := time.NewTicker(framework.ShortTimeInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-pollCtx.Done():
-			t.Errorf("Status mismatch (-expected +actual):\n%s", lastDiff)
-
-			return
-		case <-ticker.C:
-			rmm, err := f.RSMClient.ResourceStateMetricsV1alpha1().ResourceMetricsMonitors(goldenRule.In.GetNamespace()).
+	if err := testutil.WaitForRMMStatus(
+		ctx,
+		goldenRule.Status,
+		func(ctx context.Context) (*v1alpha1.ResourceMetricsMonitorStatus, error) {
+			rmm, err := f.RSMClient.ResourceStateMetricsV1alpha1().
+				ResourceMetricsMonitors(goldenRule.In.GetNamespace()).
 				Get(ctx, goldenRule.In.GetName(), metav1.GetOptions{})
 			if err != nil {
-				continue
+				return nil, err
 			}
 
-			lastDiff = cmp.Diff(goldenRule.Status, &rmm.Status, opts)
-			if lastDiff == "" {
-				return
-			}
-		}
-	}
-}
-
-// validateMetricsOutput validates that the scraped metrics match expected output.
-func validateMetricsOutput(t *testing.T, f *framework.Framework, expectedMetricLines []string) {
-	t.Helper()
-
-	expectedMetrics := strings.Join(expectedMetricLines, "\n") + "\n"
-	port := *f.Options.MainPort
-	url := fmt.Sprintf("http://127.0.0.1:%d/metrics", port)
-
-	// Extract family names from the expected text so that ScrapeAndCompare
-	// filters to only those families declared in that golden rule, allowing us
-	// to ignore other metrics emitted by the controller that aren't relevant to
-	// the specific golden rule being tested.
-	var familyNames []string
-
-	for _, line := range strings.Split(expectedMetrics, "\n") {
-		if strings.HasPrefix(line, "# TYPE ") {
-			if parts := strings.Fields(line); len(parts) >= 3 {
-				familyNames = append(familyNames, parts[2])
-			}
-		}
-	}
-
-	if err := testutil.ScrapeAndCompare(url, strings.NewReader(expectedMetrics), familyNames...); err != nil {
-		t.Errorf("Metric comparison failed: %v", err)
+			return &rmm.Status, nil
+		},
+		10*time.Second,
+		framework.ShortTimeInterval,
+	); err != nil {
+		t.Errorf("Status mismatch: %v", err)
 	}
 }

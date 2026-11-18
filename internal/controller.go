@@ -21,6 +21,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"net"
+	"net/http"
 	"reflect"
 	"strconv"
 	"sync"
@@ -149,11 +150,40 @@ func NewController(
 }
 
 // Run starts the controller and blocks until the context is cancelled.
-//
-//nolint:funlen // metric registration + server setup is a single cohesive startup sequence
 func (c *Controller) Run(ctx context.Context, workers int) error {
+	return c.run(ctx, workers, nil, nil)
+}
+
+// RunWithListeners runs the controller with pre-bound self and main listeners.
+// It takes ownership of both listeners and closes them when RunWithListeners returns.
+func (c *Controller) RunWithListeners(ctx context.Context, workers int, selfListener, mainListener net.Listener) error {
+	if selfListener == nil || mainListener == nil {
+		if selfListener != nil {
+			_ = selfListener.Close()
+		}
+
+		if mainListener != nil {
+			_ = mainListener.Close()
+		}
+
+		return stderrors.New("both self and main listeners are required")
+	}
+
+	return c.run(ctx, workers, selfListener, mainListener)
+}
+
+//nolint:funlen // metric registration + server setup is a single cohesive startup sequence
+func (c *Controller) run(ctx context.Context, workers int, selfListener, mainListener net.Listener) error {
 	defer utilruntime.HandleCrash()
 	defer c.workqueue.ShutDown()
+
+	if selfListener != nil {
+		defer selfListener.Close()
+	}
+
+	if mainListener != nil {
+		defer mainListener.Close()
+	}
 
 	logger := klog.FromContext(ctx)
 	logger.V(1).Info("Starting controller")
@@ -269,6 +299,13 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 
 	self := newSelfServer(selfAddr).build(ctx, c.kubeclientset, registry)
 	main := newMainServer(mainAddr, *c.options.Kubeconfig, &c.stores, c.requestDurationVec).build(ctx, c.kubeclientset, registry)
+	serve := func(server *http.Server, listener net.Listener) error {
+		if listener != nil {
+			return server.Serve(listener)
+		}
+
+		return server.ListenAndServe()
+	}
 
 	logger.V(1).Info("Starting workers")
 
@@ -282,14 +319,14 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 	go func() {
 		logger.V(1).Info("Starting telemetry server on", "address", selfAddr)
 
-		if err := self.ListenAndServe(); err != nil {
+		if err := serve(self, selfListener); err != nil {
 			logger.Error(err, "stopping telemetry server")
 		}
 	}()
 	go func() {
 		logger.V(1).Info("Starting main server on", "address", mainAddr)
 
-		if err := main.ListenAndServe(); err != nil {
+		if err := serve(main, mainListener); err != nil {
 			logger.Error(err, "stopping main server")
 		}
 	}()

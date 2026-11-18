@@ -22,6 +22,8 @@ CONTROLLER_GEN_APIS_DIR ?= pkg/apis
 CONTROLLER_GEN_OUT_DIR ?= /tmp/resource-state-metrics/controller-gen
 CONTROLLER_GEN_VERSION ?= v0.16.5
 CREATED_AT_EPOCH ?=
+# ENVTEST_K8S_VERSION is derived from the version of k8s.io/api in go.mod (e.g., v0.32.3 becomes 1.32.x).
+ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'.' '{printf "1.%d.x", $$2}')
 GO ?= go
 GOJSONTOYAML ?= $(GOBIN)/gojsontoyaml
 GOJSONTOYAML_VERSION ?= v0.1.0
@@ -52,6 +54,8 @@ PROJECT_NAME = resource-state-metrics
 PROPOSALS_DIR ?= proposals
 PROPOSAL_FILES = $(shell find $(PROPOSALS_DIR) -type f -name "*.md")
 REGISTRY ?= us-central1-docker.pkg.dev/k8s-staging-images/resource-state-metrics
+SETUP_ENVTEST ?= $(GOBIN)/setup-envtest
+SETUP_ENVTEST_VERSION ?= release-0.25
 TAG ?= $(BUILD_TAG)
 V ?= 4
 VALE ?= vale
@@ -103,6 +107,8 @@ setup:
 	@$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	# Setup controller-gen.
 	@$(GO) install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
+	# Setup setup-envtest.
+	@$(GO) install sigs.k8s.io/controller-runtime/tools/setup-envtest@$(SETUP_ENVTEST_VERSION)
 	# Setup code-generator.
 	@$(GO) install k8s.io/code-generator/cmd/...@$(CODE_GENERATOR_VERSION)
 	# Setup checkmake.
@@ -223,19 +229,40 @@ pprof:
 
 .PHONY: test_unit
 test_unit:
-	@$(GO) test -v -race $(shell go list ./... | \
+	@$(GO) test -count=1 -v -race $(shell go list ./... | \
 		grep -v "/generated" | \
 		grep -v "/signals" | \
 		grep -v "/tests" | \
-		grep -v "/version")
+		grep -v "/version") ./tests/testutil
+
+.PHONY: test_e2e_fake
+test_e2e_fake:
+	@$(GO) test -count=1 -v -race ./tests/fake/...
+
+# TODO: bavarianbidi
+# install the kube-apiserver and etcd-binary to the LOCALBIN folder
+# this requires the "lazytool" implementation of https://github.com/kubernetes-sigs/resource-state-metrics/issues/37
+.PHONY: test_e2e_envtest
+test_e2e_envtest:
+	@assets="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(GOBIN) -p path)" || \
+		{ echo "Failed to resolve envtest assets for Kubernetes $(ENVTEST_K8S_VERSION)"; exit 1; }; \
+	test -n "$$assets" || { echo "setup-envtest returned an empty assets path"; exit 1; }; \
+	KUBEBUILDER_ASSETS="$$assets" REQUIRE_ENVTEST=true \
+	$(GO) test -race -v -count=1 -timeout 120s ./tests/envtest/...
+
+.PHONY: test_e2e_envtest_kind
+test_e2e_envtest_kind:
+	@USE_EXISTING_CLUSTER=true \
+	$(GO) test -race -v -count=1 -timeout 120s ./tests/envtest/...
 
 .PHONY: test_e2e
-test_e2e:
-	@$(GO) test -v -race ./tests/...
+test_e2e: test_e2e_fake test_e2e_envtest
 
 .PHONY: test
 test: test_unit test_e2e
 
+# The targets below drive a manually deployed controller (see `make local`) and are kept for local development.
+# The automated metrics comparison now lives in test_e2e_envtest.
 .PHONY: apply_testdata
 apply_testdata: delete_testdata
 	# Applying testdata

@@ -18,6 +18,7 @@ package options
 
 import (
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -121,5 +122,45 @@ func TestValidateFlag(t *testing.T) {
 				t.Fatalf("validateFlag(%q, %q) error = %q, want containing %q", testCase.flag, testCase.value, err, testCase.wantErr)
 			}
 		})
+	}
+}
+
+func TestNewOptionsDefaults(t *testing.T) {
+	t.Setenv("KUBECONFIG", "/tmp/kubeconfig")
+	t.Setenv("KUBERNETES_MASTER", "https://kubernetes.example")
+
+	opts := NewOptions(klog.NewKlogr())
+
+	tests := []struct {
+		name string
+		got  any
+		want any
+	}{
+		{name: "cardinality warning ratio", got: *opts.CardinalityWarningRatio, want: DefaultCardinalityWarningRatio},
+		{name: "CEL cost limit", got: *opts.CELCostLimit, want: uint64(CELDefaultCostLimit)},
+		{name: "CEL timeout", got: *opts.CELTimeout, want: CELDefaultTimeout},
+		{name: "global cardinality limit", got: *opts.GlobalCardinalityLimit, want: int64(DefaultGlobalCardinalityLimit)},
+		{name: "kubeconfig environment default", got: *opts.Kubeconfig, want: "/tmp/kubeconfig"},
+		{name: "main host", got: *opts.MainHost, want: DefaultListenHost},
+		{name: "main port", got: *opts.MainPort, want: 9999},
+		{name: "master URL environment default", got: *opts.MasterURL, want: "https://kubernetes.example"},
+		{name: "GOMEMLIMIT ratio", got: *opts.RatioGOMEMLIMIT, want: 0.9},
+		{
+			name: "resource cardinality default",
+			got:  *opts.ResourceCardinalityDefault,
+			want: int64(DefaultResourceCardinalityDefault),
+		},
+		{name: "self host", got: *opts.SelfHost, want: DefaultListenHost},
+		{name: "self port", got: *opts.SelfPort, want: 9998},
+		{name: "Starlark max steps", got: *opts.StarlarkMaxSteps, want: StarlarkDefaultMaxSteps},
+		{name: "Starlark timeout", got: *opts.StarlarkTimeout, want: StarlarkDefaultTimeout},
+		{name: "version", got: *opts.Version, want: false},
+		{name: "workers", got: *opts.Workers, want: 2},
+	}
+
+	for _, testCase := range tests {
+		if !reflect.DeepEqual(testCase.got, testCase.want) {
+			t.Errorf("%s: got %#v, want %#v", testCase.name, testCase.got, testCase.want)
+		}
 	}
 }
