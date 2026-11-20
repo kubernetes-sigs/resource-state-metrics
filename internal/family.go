@@ -692,12 +692,13 @@ func (f *FamilyType) buildHeaders() string {
 	return header.String()
 }
 
-// helpEscaper escapes a HELP string per the Prometheus text exposition format:
-// backslashes become "\\" and newlines become "\n". A single-pass replacer performs
-// non-overlapping replacements, so escaping order is not a concern.
-var helpEscaper = strings.NewReplacer("\\", `\\`, "\n", `\n`)
+// helpEscaper escapes a HELP string: backslashes become "\\", newlines become "\n" and
+// double quotes become "\"". OpenMetrics, which the server prefers, requires all three,
+// and the Prometheus text format reads them back the same way. A single-pass replacer
+// performs non-overlapping replacements, so escaping order is not a concern.
+var helpEscaper = strings.NewReplacer("\\", `\\`, "\n", `\n`, `"`, `\"`)
 
-// escapeHelp escapes a HELP string per the Prometheus text exposition format.
+// escapeHelp escapes a HELP string for both the OpenMetrics and Prometheus text formats.
 func escapeHelp(s string) string {
 	return helpEscaper.Replace(s)
 }

@@ -439,7 +439,8 @@ func TestEscapeHelp(t *testing.T) {
 		{name: "empty string unchanged", in: "", want: ""},
 		{name: "single newline escaped", in: "line1\nline2", want: `line1\nline2`},
 		{name: "single backslash escaped", in: `regex \d+`, want: `regex \\d+`},
-		{name: "backslash then newline: backslash escaped first", in: "a\\\nb", want: `a\\\nb`},
+		{name: "backslash followed by newline", in: "a\\\nb", want: `a\\\nb`},
+		{name: "double quotes escaped", in: `ready "condition" count`, want: `ready \"condition\" count`},
 		{name: "multiple newlines all escaped", in: "a\nb\nc", want: `a\nb\nc`},
 		{name: "tab is left as-is", in: "a\tb", want: "a\tb"},
 		{name: "unicode passes through", in: "héllo → wörld", want: "héllo → wörld"},
@@ -463,12 +464,12 @@ func TestFamilyType_buildHeaders_escapesHelp(t *testing.T) {
 	f := &FamilyType{
 		Family: v1alpha1.Family{
 			Name: "example",
-			Help: "line1\nline2 with \\ backslash",
+			Help: "line1\nline2 with \\ backslash and \"quotes\"",
 		},
 	}
 
 	got := f.buildHeaders()
-	want := "# HELP kube_customresource_example line1\\nline2 with \\\\ backslash\n# TYPE kube_customresource_example gauge"
+	want := "# HELP kube_customresource_example line1\\nline2 with \\\\ backslash and \\\"quotes\\\"\n# TYPE kube_customresource_example gauge"
 
 	if got != want {
 		t.Errorf("buildHeaders() mismatch:\n got: %q\nwant: %q", got, want)
