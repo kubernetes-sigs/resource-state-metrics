@@ -27,6 +27,7 @@ import (
 	"github.com/kubernetes-sigs/resource-state-metrics/internal/version"
 	"github.com/kubernetes-sigs/resource-state-metrics/pkg/apis/resourcestatemetrics/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
@@ -387,10 +388,35 @@ func (c *Controller) updateCardinalityStatus(ctx context.Context, resource *v1al
 
 	agg.violations = append(agg.violations, resourceViolations...)
 
+	c.applyGlobalResourceCutoffs()
+
 	c.updateCardinalityMetrics(resource, agg)
 	c.recordCardinalityViolations(resource, agg.violations)
 
 	return c.persistCardinalityStatus(ctx, resource, agg)
+}
+
+// applyGlobalResourceCutoffs syncs resource and global cutoff states across all active stores.
+func (c *Controller) applyGlobalResourceCutoffs() {
+	c.stores.Range(func(key, value any) bool {
+		uid, ok := key.(types.UID)
+		if !ok {
+			return true
+		}
+
+		stores, ok := value.([]*StoreType)
+		if !ok {
+			return true
+		}
+
+		isCutoff := c.globalCardinalityManager.IsResourceCutoff(uid)
+		for _, store := range stores {
+			store.SetResourceCutoff(isCutoff)
+			store.checkAndApplyThresholds()
+		}
+
+		return true
+	})
 }
 
 // recordCardinalityViolations increments the cardinality_exceeded_total metric for violations.
