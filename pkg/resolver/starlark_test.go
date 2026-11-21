@@ -16,7 +16,10 @@ limitations under the License.
 package resolver
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1038,6 +1041,63 @@ families = [family(name="test", help="test", kind="gauge", samples=samples)]
 	}
 }
 
+func TestStarlarkResolver_ConcurrentResolve(t *testing.T) {
+	t.Parallel()
+
+	script := `
+expected_name = obj["metadata"]["name"]
+call_count = 0
+call_count += 1
+samples = [metric(labels={"name": expected_name, "call": str(call_count)}, value=1.0)]
+families = [family(name="test", help="test", kind="gauge", samples=samples)]
+`
+
+	resolver := NewStarlarkResolver(klog.NewKlogr(), script, 5*time.Second, 100000)
+
+	const goroutines = 32
+	const resolvesPerGoroutine = 10
+	var wg sync.WaitGroup
+	errCh := make(chan error, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			name := "resource-" + strconv.Itoa(i)
+			obj := map[string]interface{}{
+				"metadata": map[string]interface{}{"name": name},
+			}
+
+			for j := 0; j < resolvesPerGoroutine; j++ {
+				families, err := resolver.Resolve(obj)
+				if err != nil {
+					errCh <- err
+					return
+				}
+				if len(families) != 1 || len(families[0].Samples) != 1 {
+					errCh <- fmt.Errorf("goroutine %d: unexpected result: %+v", i, families)
+					return
+				}
+
+				sample := families[0].Samples[0]
+				if sample.Labels["name"] != name || sample.Labels["call"] != "1" {
+					errCh <- fmt.Errorf("goroutine %d: got labels %+v, want name=%q call=1", i, sample.Labels, name)
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Error(err)
+	}
+}
+
 // BenchmarkStarlarkResolver_Resolve exercises repeated resolution with the
 // same resolver, the pattern the controller follows when generating metrics
 // for every object in a store: the script is fixed, only the object varies.
@@ -1070,7 +1130,7 @@ families = [
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		if _, err := sr.Resolve(obj); err != nil {
 			b.Fatalf("unexpected error: %v", err)
 		}

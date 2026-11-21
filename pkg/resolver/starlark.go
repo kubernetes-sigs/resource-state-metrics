@@ -161,7 +161,11 @@ func (sr *StarlarkResolver) Resolve(obj map[string]interface{}) ([]ResolvedFamil
 func (sr *StarlarkResolver) compiledProgram() (*starlark.Program, error) {
 	sr.compileOnce.Do(func() {
 		isPredeclared := func(name string) bool {
-			return name == "obj" || starlarkPredeclared.Has(name)
+			if name == "obj" {
+				return true
+			}
+			_, ok := starlarkPredeclared[name]
+			return ok
 		}
 
 		_, program, err := starlark.SourceProgramOptions(starlarkFileOptions, "script.star", sr.script, isPredeclared)
@@ -195,7 +199,9 @@ func (sr *StarlarkResolver) resolveWithSteps(thread *starlark.Thread, obj map[st
 	globals, err := program.Init(thread, predeclared)
 	// Freeze the globals irrespective of the execution outcome, mirroring
 	// starlark.ExecFileOptions.
-	globals.Freeze()
+	if globals != nil {
+		globals.Freeze()
+	}
 
 	if err != nil {
 		var evalErr *starlark.EvalError
