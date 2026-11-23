@@ -3,7 +3,7 @@ module github.com/kubernetes-sigs/resource-state-metrics
 go 1.26.0
 
 require (
-	cel.dev/cel-go v0.33.2
+	cel.dev/cel-go v0.33.4
 	github.com/KimMachineGun/automemlimit v0.7.5
 	github.com/google/go-cmp v0.7.0
 	github.com/iancoleman/strcase v0.3.0
