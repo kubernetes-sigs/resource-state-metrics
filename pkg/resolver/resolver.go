@@ -16,6 +16,8 @@ limitations under the License.
 
 package resolver
 
+import "context"
+
 // Resolver defines behaviors for resolving a given expression.
 type Resolver interface {
 
@@ -25,8 +27,32 @@ type Resolver interface {
 	// NOTE: A nil map means the expression could not be resolved (for example, a missing field), while an empty,
 	// non-nil map means it resolved to no values (for example, an empty list).
 	Resolve(query string, unstructuredObjectMap map[string]interface{}) map[string]string
+}
 
-	//nolint:godox
-	// TODO: All behavioral traits between resolvers must be surfaced here.
-	// underscoreExpansionSupported() bool
+// ExpressionResolver compiles one expression at a time and declares what it supports.
+type ExpressionResolver interface {
+	// Compile parses the expression once, so ErrInvalidExpression surfaces at config load and not per object.
+	Compile(expr string) (Expression, error)
+	Traits() ExpressionTraits
+}
+
+// Expression is a compiled expression that can be evaluated against objects.
+type Expression interface {
+	// Eval returns the resolved value, whether the field was found, and any evaluation error.
+	// The three results go together in one of three ways. A success is found true, a nil error
+	// and a Value whose Kind is scalar, list or map. A missing field is found false, a nil error
+	// and the zero Value. An evaluation failure is found false, a non nil error and the zero Value.
+	Eval(ctx context.Context, obj map[string]any) (Value, bool, error)
+}
+
+// FamilyResolver compiles one script that resolves whole metric families.
+type FamilyResolver interface {
+	// Compile parses the script once, so a bad script surfaces at config load.
+	Compile(script string) (Script, error)
+	Traits() Traits
+}
+
+// Script is a compiled script that can be evaluated against objects.
+type Script interface {
+	Eval(ctx context.Context, obj map[string]any) ([]ResolvedFamily, error)
 }
