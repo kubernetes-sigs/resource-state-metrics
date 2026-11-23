@@ -17,7 +17,7 @@ limitations under the License.
 package internal
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"maps"
 	"regexp"
@@ -53,9 +53,6 @@ const (
 // allocations and deallocations of strings.Builder objects, which can be
 // significant when generating a large number of metrics, especially in
 // high-cardinality scenarios.
-// listIndexRegex matches resolver keys of the form "fieldParent#N" used for list expansion.
-var listIndexRegex = regexp.MustCompile(`.+#\d+`) //nolint:forbidigo // package-level
-
 // nonWordRegex matches non-alphanumeric characters for label key sanitization.
 var nonWordRegex = regexp.MustCompile(`\W`) //nolint:forbidigo // package-level
 
@@ -109,11 +106,15 @@ type FamilyType struct {
 	celCostLimit        uint64
 	celTimeout          time.Duration
 	celEvaluations      *prometheus.CounterVec
+	resolverEvaluations *prometheus.CounterVec
 	managedRMMNamespace string
 	managedRMMName      string
 	createdAt           time.Time
 	cutoff              atomic.Bool
 	starlarkResolver    *resolver.StarlarkResolver
+	compileOnce         sync.Once
+	compiledMetrics     []compiledMetric
+	script              resolver.Script
 }
 
 // SetCutoff sets the cutoff state for this family.
@@ -164,29 +165,21 @@ func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) 
 	case f.starlarkResolver != nil:
 		metricStr, sampleCount = f.buildMetricStringFromStarlark(unstructured)
 	default:
+		f.compile()
+
 		familyRawBuilder := getBuilder()
 		defer putBuilder(familyRawBuilder)
 
-		for i := range f.Metrics {
-			metric := &f.Metrics[i]
+		ctx := context.Background()
+
+		for _, metric := range f.compiledMetrics {
 			metricRawBuilder := getBuilder()
 
-			// Combine metric labels with family labels
-			metricLabels := inheritMetricLabels(f, metric)
+			labels := f.evalLabels(ctx, metric, unstructured.Object, logger)
 
-			resolverInstance, err := f.resolver(metric.Resolver)
+			value, expandedValues, ok, err := f.evalValue(ctx, metric, unstructured.Object, logger)
 			if err != nil {
-				logger.V(1).Error(fmt.Errorf("error resolving metric: %w", err), "skipping")
-				putBuilder(metricRawBuilder)
-
-				continue
-			}
-
-			resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet := resolveLabels(metricLabels, resolverInstance, unstructured.Object)
-
-			resolvedValue, ok, err := resolveMetricValue(resolverInstance, metric.Value, unstructured.Object, resolvedExpandedLabelSet)
-			if err != nil {
-				logger.V(1).Error(fmt.Errorf("error resolving metric value %q: %w", metric.Value, err), "skipping")
+				logger.V(1).Error(fmt.Errorf("error resolving metric value: %w", err), "skipping")
 				putBuilder(metricRawBuilder)
 
 				continue
@@ -198,7 +191,11 @@ func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) 
 				continue
 			}
 
-			samples, err := writeMetricSamplesWithCount(metricRawBuilder, f.Name, f.kind(), unstructured, resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet, resolvedValue, logger)
+			if len(expandedValues) > 0 {
+				labels.expanded[expandedValueSentinel] = expandedValues
+			}
+
+			samples, err := writeMetricSamplesWithCount(metricRawBuilder, f.Name, f.kind(), unstructured, labels.keys, labels.values, labels.expanded, value, logger)
 			if err != nil {
 				putBuilder(metricRawBuilder)
 
@@ -227,7 +224,15 @@ func (f *FamilyType) buildMetricString(unstructured *unstructured.Unstructured) 
 func (f *FamilyType) buildMetricStringFromStarlark(unstr *unstructured.Unstructured) (string, int64) {
 	logger := f.logger.WithValues("family", f.Name)
 
-	families, err := f.starlarkResolver.Resolve(unstr.Object)
+	f.compile()
+
+	if f.script == nil {
+		return "", 0
+	}
+
+	families, err := f.script.Eval(context.Background(), unstr.Object)
+	f.countEvaluation(v1alpha1.ResolverTypeStarlark, err)
+
 	if err != nil {
 		logger.V(1).Error(err, "Starlark generation failed")
 
@@ -287,101 +292,6 @@ func inheritMetricLabels(f *FamilyType, metric *v1alpha1.Metric) []v1alpha1.Labe
 	return append(metric.Labels, f.Labels...)
 }
 
-// resolveMetricValue resolves the value expression for a single metric. If the
-// resolver returns a scalar, it is returned directly. If the resolver returns
-// a list (indexed keys like "fieldParent#N"), the values are collected in
-// order and stored in resolvedExpandedLabelSet under the sentinel key so that
-// writeMetricSamples can emit one sample per element. Returns (value, ok, error):
-//   - ("value", true, nil): scalar or expanded list — emit metric(s)
-//   - ("", false, nil): empty result (e.g. guarded CEL expression) — skip silently
-//   - ("", false, err): resolution failed — caller should log
-func resolveMetricValue(resolverInstance resolver.Resolver, valueExpr string, obj map[string]any, resolvedExpandedLabelSet map[string][]string) (string, bool, error) {
-	resolvedValueMap := resolverInstance.Resolve(valueExpr, obj)
-
-	// An empty map means the expression evaluated successfully but
-	// produced no results (e.g. an empty list from a guarded CEL
-	// expression). This is not an error — silently emit zero samples.
-	if len(resolvedValueMap) == 0 {
-		return "", false, nil
-	}
-
-	if resolvedValue, found := resolvedValueMap[valueExpr]; found {
-		return resolvedValue, true, nil
-	}
-
-	expandedValues := collectIndexedResolvedValues(resolvedValueMap)
-
-	if len(expandedValues) == 0 {
-		return "", false, errors.New("resolver returned non-empty map but no scalar or expanded values matched")
-	}
-
-	resolvedExpandedLabelSet[expandedValueSentinel] = expandedValues
-
-	return "", true, nil
-}
-
-// resolveLabels resolves label keys and values including handling of composite map/list structures.
-// Labels with names starting with "_" are treated as map expansion markers: the map keys from the
-// resolved value become label names directly (useful for converting k8s labels to Prometheus labels).
-func resolveLabels(labels []v1alpha1.Label, resolverInstance resolver.Resolver, obj map[string]any) ([]string, []string, map[string][]string) {
-	var (
-		resolvedLabelKeys        []string
-		resolvedLabelValues      []string
-		resolvedExpandedLabelSet = make(map[string][]string)
-	)
-
-	for _, label := range labels {
-		resolvedLabelset := resolverInstance.Resolve(label.Value, obj)
-		// If the query is found in the resolved labelset, it means we are dealing with non-composite value(s).
-		// For e.g., consider:
-		// * `name: o.metadata.name` -> `o.metadata.name: foo`
-		// * `v: o.spec.versions` -> `v#0: [v1, v2]` // no `o.spec.versions` in the resolved labelset
-		if val, ok := resolvedLabelset[label.Value]; ok {
-			resolvedLabelValues = append(resolvedLabelValues, val)
-			resolvedLabelKeys = append(resolvedLabelKeys, sanitizeKey(label.Name))
-
-			continue
-		}
-
-		// Check if this is a map expansion label (name starts with "_").
-		// In this case, map keys become label names directly without concatenation.
-		isMapExpansion := strings.HasPrefix(label.Name, "_")
-
-		// Collect list-indexed values in deterministic suffix order (#0, #1, ...)
-		// to match the order used by resolveMetricValue. Map iteration order is
-		// non-deterministic and would decouple labels from their metric values.
-		// A label whose expression could not be resolved (e.g. a missing field) is left
-		// out of the sample. A label that resolved to an empty list still adds its entry,
-		// so the object emits no samples for it.
-		if resolvedLabelset == nil {
-			continue
-		}
-
-		sanitizedName := sanitizeKey(label.Name)
-		resolvedExpandedLabelSet[sanitizedName] = append(resolvedExpandedLabelSet[sanitizedName], collectIndexedResolvedValues(resolvedLabelset)...)
-
-		// Process non-list entries (map keys, non-composite values).
-		for k, v := range resolvedLabelset {
-			if listIndexRegex.MatchString(k) {
-				continue
-			}
-
-			resolvedLabelValues = append(resolvedLabelValues, v)
-
-			if isMapExpansion {
-				// Map expansion: use the map key directly as the label name
-				resolvedLabelKeys = append(resolvedLabelKeys, sanitizeKey(k))
-			} else {
-				resolvedLabelKeys = append(resolvedLabelKeys, sanitizeKey(label.Name+k))
-			}
-		}
-	}
-
-	sortLabels(resolvedLabelKeys, resolvedLabelValues)
-
-	return resolvedLabelKeys, resolvedLabelValues, resolvedExpandedLabelSet
-}
-
 // sortLabels sorts keys alphabetically and applies the same permutation to all
 // parallel slices, so that positionally-correlated data stays aligned with its
 // corresponding key after sorting. For example, given label keys
@@ -415,60 +325,6 @@ func sortLabels(keys []string, parallel ...[]string) {
 			reorder(p)
 		}
 	}
-}
-
-// collectIndexedResolvedValues returns resolver values stored under numbered
-// keys with #0, #1, ... suffixes, preserving empty string values. Collection
-// stops at the first gap in the index sequence, so only the contiguous run
-// starting at #0 is returned.
-func collectIndexedResolvedValues(resolved map[string]string) []string {
-	// An index can only belong to the contiguous run starting at #0 if it is
-	// smaller than the total number of keys, so flat slices of len(resolved)
-	// suffice to stage the values. They are allocated lazily, on the first
-	// index actually seen, so that resolutions without indexed keys (scalars
-	// and map expansions, the common case) stay allocation-free.
-	var (
-		staged  []string
-		present []bool
-	)
-
-	for k, value := range resolved {
-		hash := strings.LastIndexByte(k, '#')
-		if hash < 0 {
-			continue
-		}
-
-		suffix := k[hash+1:]
-		// Reject non-canonical forms ("01", "+1", "-1") that Atoi accepts but
-		// the resolvers never generate.
-		if suffix == "" || suffix[0] == '+' || suffix[0] == '-' || (suffix[0] == '0' && len(suffix) > 1) {
-			continue
-		}
-
-		i, err := strconv.Atoi(suffix)
-		if err != nil || i >= len(resolved) {
-			continue
-		}
-
-		if staged == nil {
-			staged = make([]string, len(resolved))
-			present = make([]bool, len(resolved))
-		}
-
-		staged[i] = value
-		present[i] = true
-	}
-
-	end := 0
-	for end < len(present) && present[end] {
-		end++
-	}
-
-	if end == 0 {
-		return nil
-	}
-
-	return staged[:end:end]
 }
 
 // sanitizeKey converts a label key to snake_case and strips non-alphanumeric characters.
@@ -639,37 +495,6 @@ func writeExpandedSamples(writeFunc func([]string, []string) error, labelKeys, l
 	}
 
 	return nil
-}
-
-func (f *FamilyType) resolver(inheritedResolver v1alpha1.ResolverType) (resolver.Resolver, error) {
-	if inheritedResolver == v1alpha1.ResolverTypeNone {
-		inheritedResolver = f.Resolver
-	}
-
-	switch inheritedResolver {
-	case v1alpha1.ResolverTypeNone:
-		return nil, fmt.Errorf("no resolver specified for family %q: must set resolver at store, family, or metric level", f.Name)
-	case v1alpha1.ResolverTypeUnstructured:
-		return resolver.NewUnstructuredResolver(f.logger), nil
-	case v1alpha1.ResolverTypeCEL:
-		costLimit := f.celCostLimit
-		if costLimit == 0 {
-			costLimit = uint64(resolver.CELDefaultCostLimit)
-		}
-
-		timeout := f.celTimeout
-		if timeout == 0 {
-			timeout = time.Duration(resolver.CELDefaultTimeout) * time.Second
-		}
-
-		return resolver.NewCELResolver(f.logger, costLimit, timeout, f.celEvaluations, f.managedRMMNamespace, f.managedRMMName, f.Name), nil
-	case v1alpha1.ResolverTypeStarlark:
-		// Starlark resolver uses a different resolution pattern (script-based).
-		// If we reach here, it means the family has resolver=starlark without a starlark config.
-		return nil, fmt.Errorf("starlark resolver requires starlark config in family %q", f.Name)
-	default:
-		return nil, fmt.Errorf("error resolving metric: unknown resolver %q", inheritedResolver)
-	}
 }
 
 // buildHeaders generates the header for the given family.

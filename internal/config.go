@@ -45,6 +45,7 @@ type configurer struct {
 	celCostLimit               uint64
 	celTimeout                 time.Duration
 	celEvaluations             *prometheus.CounterVec
+	resolverEvaluations        *prometheus.CounterVec
 	resourceCardinalityDefault int64
 	cardinalityWarningRatio    float64
 	starlarkTimeout            time.Duration
@@ -64,6 +65,7 @@ func newConfigurer(
 	celCostLimit uint64,
 	celTimeout time.Duration,
 	celEvaluations *prometheus.CounterVec,
+	resolverEvaluations *prometheus.CounterVec,
 	resourceCardinalityDefault int64,
 	cardinalityWarningRatio float64,
 	starlarkTimeout time.Duration,
@@ -79,6 +81,7 @@ func newConfigurer(
 		celCostLimit:               celCostLimit,
 		celTimeout:                 celTimeout,
 		celEvaluations:             celEvaluations,
+		resolverEvaluations:        resolverEvaluations,
 		resourceCardinalityDefault: resourceCardinalityDefault,
 		cardinalityWarningRatio:    cardinalityWarningRatio,
 		starlarkTimeout:            starlarkTimeout,
@@ -240,6 +243,7 @@ func (c *configurer) buildStoreFromConfig(ctx context.Context, store *v1alpha1.S
 		c.celCostLimit,
 		c.celTimeout,
 		c.celEvaluations,
+		c.resolverEvaluations,
 		c.resource.GetNamespace(),
 		c.resource.GetName(),
 		storeCardinalityLimit,
