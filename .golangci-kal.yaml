@@ -1,0 +1,158 @@
+---
+# Copyright 2026 The Kubernetes resource-state-metrics Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+version: "2"
+run:
+  allow-parallel-runners: true
+linters:
+  default: none
+  enable:
+    - kubeapilinter # linter for Kube API conventions
+  settings:
+    custom:
+      kubeapilinter:
+        type: module
+        description: KAL is the Kube-API-Linter and lints Kube like APIs based on API conventions and best practices.
+        settings:
+          linters:
+            enable:
+              # Ensures arrays of structs have at least one required field
+              #
+              # When an array contains structs where all fields are optional or unmarked, it becomes difficult to distinguish between different array elements in YAML configurations. This can lead to ambiguous or confusing API definitions.
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#arrayofstruct
+              - "arrayofstruct"
+              # Ensure comments start with the serialized version of the field name.
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#commentstart
+              - "commentstart"
+              # Ensure conditions have the correct json tags and markers.
+              #
+              # Conditions are idiomatically the first field within the status struct, and the linter will highlight when the Conditions are not the first field.
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#conditions
+              - "conditions"
+              # Ensure mutually exclusive markers are not used on the same field
+              #
+              # See also the 'conditions' rule below with the proposed configuration for CRDs.
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#conditions
+              - "conflictingmarkers"
+              # Ensure fields have either a default value or are required
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#defaultorrequired
+              - "defaultorrequired"
+              # Ensure default markers are configured correctly
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#defaults
+              - "defaults"
+              # Ensure there are no exact duplicate markers. for types and fields.
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#duplicatemarkers
+              - "duplicatemarkers"
+              # Ensure only int32 and int64 are used for integers.
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#integers
+              - "integers"
+              # Ensure every field has a json tag.
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#jsontags
+              - "jsontags"
+              # Ensure all strings and arrays have maximum lengths/maximum items.
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#maxlength
+              - "maxlength"
+              # Ensure all strings and arrays have minimum lengths/minimum items.
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#minlength
+              - "minlength"
+              # Bools do not evolve over time, should use enums instead.
+              #
+              # NOTE: Disabled because the API currently includes boolean fields (e.g. CardinalityStatus.ThresholdsExceeded).
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#nobools
+              # - "nobools"
+              # Prevents usage of `Duration` types.
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#nodurations
+              - "nodurations"
+              # Ensure floats are not used.
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#nofloats
+              - "nofloats"
+              # Ensure maps are not used.
+              #
+              # NOTE: Disabled because the API currently includes map fields (e.g. CardinalityStatus.PerStore/PerFamily).
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#nomaps
+              # - "nomaps"
+              # Ensure that types and fields do not have the nullable marker.
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#nonullable
+              - "nonullable"
+              # Prevents usage of 'Timestamp' fields
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#notimestamp
+              - "notimestamp"
+              # Ensure that all fields marked as optional adhere to being pointers and
+              # having the `omitempty` value in their `json` tag where appropriate.
+              #
+              # NOTE: Disabled to avoid requiring pointers on value types in CRD specs.
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#optionalfields
+              # - "optionalfields"
+              # Ensure that every field should be marked as `+optional` or `+required`.
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#optionalorrequired
+              - "optionalorrequired"
+              # Ensure that required fields should not be pointers, and should not have `omitempty`.
+              #
+              # NOTE: Disabled for compatibility with CRD struct definitions.
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#requiredfields
+              # - "requiredfields"
+              # Ensure that all array fields have the appropriate listType markers.
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#ssatags
+              - "ssatags"
+              # Ensure that root objects that have a `status` field should have a status subresource.
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#statussubresource
+              - "statussubresource"
+              # Ensure that types and fields do not contain more than a single definition of a marker that should only be present once.
+              #
+              # xref: https://github.com/kubernetes-sigs/kube-api-linter/blob/main/docs/linters.md#uniquemarkers
+              - "uniquemarkers"
+            disable:
+              - "*"
+          lintersConfig:
+            conflictingmarkers:
+              conflicts:
+                - name: "default_vs_required"
+                  sets:
+                    - ["default", "kubebuilder:default"]
+                    - [
+                        "required",
+                        "kubebuilder:validation:Required",
+                        "k8s:required",
+                      ]
+                  description: "A field with a default value cannot be required"
+            conditions:
+              isFirstField: Warn # Conditions are idiomatically the first field within the status struct, and the linter will highlight when the Conditions are not the first field.
+              useProtobuf: Forbid # For CRDs, protobuf tags are not necessary.
+              usePatchStrategy: Forbid # For CRDs, patchStrategy is not necessary.
+  exclusions:
+    generated: strict
+    paths:
+      - zz_generated.*\.go$ # Exclude generated files.
+      - ".*_test.go" # Exclude test files.
+    rules:
+      # KAL should only run on API folders.
+      - path-except: "pkg/apis/.*"
+        linters:
+          - kubeapilinter
