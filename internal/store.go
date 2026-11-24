@@ -35,11 +35,13 @@ type StoreType struct {
 	logger       klog.Logger
 	mutex        sync.RWMutex
 	metrics      map[types.UID][]string
+	rawMetrics   map[types.UID][]string
 	headers      []string
 	celCostLimit uint64
 	celTimeout   time.Duration
 
 	cardinalityTracker *CardinalityTracker
+	resourceCutoff     atomic.Bool
 
 	// synced is set to true after the reflector completes its initial list
 	// via Replace, indicating that all pre-existing objects have been added.
@@ -65,6 +67,7 @@ func newStore(
 	return &StoreType{
 		logger:       logger,
 		metrics:      map[types.UID][]string{},
+		rawMetrics:   map[types.UID][]string{},
 		headers:      headers,
 		Families:     families,
 		Resolver:     resolver,
@@ -85,7 +88,14 @@ func (s *StoreType) Add(objectI interface{}) error {
 	}
 
 	result := s.generateMetricsForObject(unstructuredObject)
+
 	s.metrics[unstructuredObject.GetUID()] = result.metrics
+
+	if s.rawMetrics == nil {
+		s.rawMetrics = make(map[types.UID][]string)
+	}
+
+	s.rawMetrics[unstructuredObject.GetUID()] = result.rawMetrics
 
 	// Cardinality enforcement is soft: metrics are generated first, then the
 	// threshold is checked. The object that tips the total over a limit still
@@ -94,7 +104,7 @@ func (s *StoreType) Add(objectI interface{}) error {
 	// flag and returns empty strings that overwrite the cached output.
 	if s.cardinalityTracker != nil {
 		s.cardinalityTracker.Update(unstructuredObject.GetUID(), result.perFamily)
-		s.checkAndApplyThresholds()
+		s.checkAndApplyThresholdsLocked()
 	}
 
 	s.logger.V(2).Info("Add", "key", klog.KObj(unstructuredObject))
@@ -123,10 +133,11 @@ func (s *StoreType) Delete(objectI interface{}) error {
 	s.logger.V(2).Info("Delete", "key", klog.KObj(object))
 	s.logger.V(4).Info("Delete", "metrics", s.metrics[object.GetUID()])
 	delete(s.metrics, object.GetUID())
+	delete(s.rawMetrics, object.GetUID())
 
 	if s.cardinalityTracker != nil {
 		s.cardinalityTracker.Delete(object.GetUID())
-		s.checkAndApplyThresholds()
+		s.checkAndApplyThresholdsLocked()
 	}
 
 	return nil
@@ -182,6 +193,16 @@ func (s *StoreType) GetStoreIdentifier() string {
 	return s.Group + "/" + s.Version + "/" + s.Kind
 }
 
+// SetResourceCutoff sets whether this store's parent resource or global controller is cut off.
+func (s *StoreType) SetResourceCutoff(cutoff bool) {
+	s.resourceCutoff.Store(cutoff)
+}
+
+// IsResourceCutoff returns whether this store's parent resource or global controller is cut off.
+func (s *StoreType) IsResourceCutoff() bool {
+	return s.resourceCutoff.Load()
+}
+
 func convertToUnstructured(obj interface{}) (*unstructured.Unstructured, error) {
 	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
 	if err != nil {
@@ -193,22 +214,25 @@ func convertToUnstructured(obj interface{}) (*unstructured.Unstructured, error) 
 
 // metricsWithCardinality holds the generated metrics and their cardinality counts.
 type metricsWithCardinality struct {
-	metrics   []string
-	perFamily map[string]int64
+	metrics    []string
+	rawMetrics []string
+	perFamily  map[string]int64
 }
 
 func (s *StoreType) generateMetricsForObject(obj *unstructured.Unstructured) metricsWithCardinality {
 	result := metricsWithCardinality{
-		metrics:   make([]string, len(s.Families)),
-		perFamily: make(map[string]int64),
+		metrics:    make([]string, len(s.Families)),
+		rawMetrics: make([]string, len(s.Families)),
+		perFamily:  make(map[string]int64),
 	}
 
 	for i, family := range s.Families {
 		inheritFamilyConfiguration(family, s)
 
 		family.logger = s.logger
-		metricStr, sampleCount := family.buildMetricString(obj)
+		metricStr, rawMetricStr, sampleCount := family.buildMetricString(obj)
 		result.metrics[i] = metricStr
+		result.rawMetrics[i] = rawMetricStr
 		result.perFamily[family.Name] = sampleCount
 
 		s.logger.V(4).Info("Add", "family", family.Name, "metrics", metricStr, "sampleCount", sampleCount)
@@ -228,15 +252,34 @@ func inheritFamilyConfiguration(f *FamilyType, s *StoreType) {
 // checkAndApplyThresholds checks cardinality thresholds and applies cutoffs to families.
 // This method should be called after any cardinality update (Add, Update, Delete).
 func (s *StoreType) checkAndApplyThresholds() []ThresholdViolation {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	return s.checkAndApplyThresholdsLocked()
+}
+
+func (s *StoreType) checkAndApplyThresholdsLocked() []ThresholdViolation {
 	if s.cardinalityTracker == nil {
 		return nil
 	}
 
 	violations := s.cardinalityTracker.CheckThresholds()
 
-	for _, family := range s.Families {
-		cutoff := s.cardinalityTracker.IsFamilyCutoff(family.Name)
+	resCutoff := s.IsResourceCutoff()
+	for i, family := range s.Families {
+		wasCutoff := family.IsCutoff()
+		cutoff := resCutoff || s.cardinalityTracker.IsFamilyCutoff(family.Name)
 		family.SetCutoff(cutoff)
+
+		if wasCutoff && !cutoff && s.rawMetrics != nil {
+			for uid, rawList := range s.rawMetrics {
+				if i < len(rawList) {
+					if metricList, ok := s.metrics[uid]; ok && i < len(metricList) {
+						metricList[i] = rawList[i]
+					}
+				}
+			}
+		}
 	}
 
 	return violations
